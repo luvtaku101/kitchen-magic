@@ -224,7 +224,7 @@ async function callVisionAI(base64, mediaType, mode) {
   }
 
   const text = envelope && envelope.content && envelope.content[0] && envelope.content[0].text;
-  if (!text) throw new Error("AI無回應");
+  if (!text) throw new Error("AI無回應 — 回應內容: " + rawText.slice(0, 200));
 
   const start = text.indexOf("{"); const end = text.lastIndexOf("}");
   if (start === -1 || end === -1) throw new Error("AI回應格式錯誤: " + text.slice(0, 100));
