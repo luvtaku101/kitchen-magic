@@ -178,30 +178,33 @@ const DEFAULT_ESSENTIALS = [
 
 // ── AI VISION ──────────────────────────────────────────────────────────────────
 async function callVisionAI(base64, mediaType, mode) {
-  // Call Gemini API directly — no proxy needed, Gemini supports CORS
-  const API_KEY = "AIzaSyC_zK71cax-pmHPRIv9XrixfIj10G4jOq4";
-  const API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + API_KEY;
+  // Uses Anthropic Claude API directly — generous free tier, great CORS support
+  const API_URL = "https://kitchen-magic-ai.mktg201.workers.dev";
 
   const isRestock = mode === "restock";
   const prompt = isRestock
-    ? `You are analyzing a grocery or kitchen photo. Identify ALL visible food items. For each item decide: fridge, frozen, or pantry? Reply with ONLY a valid JSON object, no markdown fences, no extra text:\n{"mode":"restock","items":[{"name":"雞蛋","nameEn":"Eggs","emoji":"🥚","section":"fridge","qty":6,"unit":"個","confidence":"high"}],"summary":"找到 N 件食材"}`
-    : `You are analyzing a photo of empty packaging or a fridge. Identify items that are EMPTY or USED UP. Reply with ONLY a valid JSON object, no markdown fences:\n{"mode":"usedup","items":[{"name":"牛奶","nameEn":"Milk","emoji":"🥛","section":"fridge","confidence":"high"}],"summary":"發現 N 件需補充"}`;
+    ? `You are analyzing a grocery or kitchen photo. Identify ALL visible food items. For each item decide which storage: fridge, frozen, or pantry. Reply with ONLY a valid JSON object, no markdown, no extra text: {"mode":"restock","items":[{"name":"雞蛋","nameEn":"Eggs","emoji":"🥚","section":"fridge","qty":6,"unit":"個","confidence":"high"}],"summary":"找到 N 件食材"}`
+    : `You are analyzing a photo of empty packaging or a fridge. Identify items that are EMPTY or USED UP. Reply with ONLY a valid JSON object, no markdown: {"mode":"usedup","items":[{"name":"牛奶","nameEn":"Milk","emoji":"🥛","section":"fridge","confidence":"high"}],"summary":"發現 N 件需補充"}`;
 
   const body = {
-    contents: [{
-      parts: [
-        { inline_data: { mime_type: mediaType, data: base64 } },
-        { text: prompt }
+    model: "claude-opus-4-5",
+    max_tokens: 1024,
+    messages: [{
+      role: "user",
+      content: [
+        { type: "image", source: { type: "base64", media_type: mediaType, data: base64 } },
+        { type: "text", text: prompt }
       ]
-    }],
-    generationConfig: { temperature: 0.1, maxOutputTokens: 1024 }
+    }]
   };
 
   let res;
   try {
     res = await fetch(API_URL, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+      },
       body: JSON.stringify(body),
     });
   } catch(netErr) {
@@ -220,14 +223,8 @@ async function callVisionAI(base64, mediaType, mode) {
     throw new Error("回應非JSON: " + rawText.slice(0, 120));
   }
 
-  if (envelope.error) {
-    throw new Error("Gemini錯誤: " + (envelope.error.message || JSON.stringify(envelope.error)));
-  }
-
-  const text = envelope && envelope.candidates && envelope.candidates[0] &&
-    envelope.candidates[0].content && envelope.candidates[0].content.parts &&
-    envelope.candidates[0].content.parts[0] && envelope.candidates[0].content.parts[0].text;
-  if (!text) throw new Error("AI無回應 — key可能無效或已過期");
+  const text = envelope && envelope.content && envelope.content[0] && envelope.content[0].text;
+  if (!text) throw new Error("AI無回應");
 
   const start = text.indexOf("{"); const end = text.lastIndexOf("}");
   if (start === -1 || end === -1) throw new Error("AI回應格式錯誤: " + text.slice(0, 100));
