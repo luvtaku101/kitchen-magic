@@ -1,0 +1,1411 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="廚房魔法">
+<meta name="theme-color" content="#FAF7F2">
+<title>廚房魔法 Kitchen Magic</title>
+
+<!-- Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com"></script>
+<!-- React + ReactDOM + Babel (for JSX in browser) -->
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<!-- Lucide icons -->
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin: 0; padding: 0; background: #FAF7F2; overscroll-behavior: none; }
+  input, textarea, select, button { font-family: inherit; }
+  select { -webkit-appearance: none; }
+  .scrollbar-hide::-webkit-scrollbar { display: none; }
+  .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+  @keyframes fadeUp  { from { opacity:0; transform:translateY(12px) } to { opacity:1; transform:none } }
+  @keyframes spin    { from { transform:rotate(0deg) } to { transform:rotate(360deg) } }
+  @keyframes wobble  {
+    0%,100% { transform: rotate(-3deg) scale(1.0) }
+    25%     { transform: rotate( 3deg) scale(1.05) }
+    50%     { transform: rotate(-2deg) scale(0.97) }
+    75%     { transform: rotate( 2deg) scale(1.03) }
+  }
+  .fade-up { animation: fadeUp .25s ease both; }
+  /* iPhone safe area */
+  .safe-top    { padding-top: env(safe-area-inset-top, 0px); }
+  .safe-bottom { padding-bottom: env(safe-area-inset-bottom, 20px); }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useMemo, useEffect, useCallback, useRef } = React;
+
+// ── Lucide icon shim ──────────────────────────────────────────────────────────
+function Icon({ name, size = 16, color, style, className }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    if (ref.current && window.lucide) {
+      ref.current.innerHTML = "";
+      const el = document.createElement("i");
+      el.setAttribute("data-lucide", name);
+      el.style.width = size + "px";
+      el.style.height = size + "px";
+      if (color) el.style.color = color;
+      ref.current.appendChild(el);
+      window.lucide.createIcons({ icons: window.lucide, nameAttr: "data-lucide", nodes: [el] });
+      const svg = el.querySelector("svg");
+      if (svg) {
+        svg.style.width = size + "px";
+        svg.style.height = size + "px";
+        if (color) svg.style.color = color;
+        if (style) Object.assign(svg.style, style);
+        if (className) svg.className.baseVal += " " + className;
+      }
+    }
+  }, [name, size, color]);
+  return <span ref={ref} style={{ display:"inline-flex", alignItems:"center", ...style }} className={className} />;
+}
+// Convenience wrappers matching original import names
+const ChefHat      = p => <Icon name="chef-hat" {...p} />;
+const Search       = p => <Icon name="search" {...p} />;
+const Clock        = p => <Icon name="clock" {...p} />;
+const Zap          = p => <Icon name="zap" {...p} />;
+const Check        = p => <Icon name="check" {...p} />;
+const X            = p => <Icon name="x" {...p} />;
+const Package      = p => <Icon name="package" {...p} />;
+const BookOpen     = p => <Icon name="book-open" {...p} />;
+const Calendar     = p => <Icon name="calendar" {...p} />;
+const Plus         = p => <Icon name="plus" {...p} />;
+const Minus        = p => <Icon name="minus" {...p} />;
+const Flame        = p => <Icon name="flame" {...p} />;
+const Microwave    = p => <Icon name="microwave" {...p} />;
+const Tag          = p => <Icon name="tag" {...p} />;
+const Star         = p => <Icon name="star" {...p} />;
+const Trash2       = p => <Icon name="trash-2" {...p} />;
+const Timer        = p => <Icon name="timer" {...p} />;
+const Bell         = p => <Icon name="bell" {...p} />;
+const ToggleLeft   = p => <Icon name="toggle-left" {...p} />;
+const ToggleRight  = p => <Icon name="toggle-right" {...p} />;
+const AlertCircle  = p => <Icon name="alert-circle" {...p} />;
+const ChevronDown  = p => <Icon name="chevron-down" {...p} />;
+const RefreshCw    = p => <Icon name="refresh-cw" {...p} />;
+const Wifi         = p => <Icon name="wifi" {...p} />;
+const WifiOff      = p => <Icon name="wifi-off" {...p} />;
+const Camera       = p => <Icon name="camera" {...p} />;
+const ScanLine     = p => <Icon name="scan-line" {...p} />;
+const ShoppingCart = p => <Icon name="shopping-cart" {...p} />;
+const Sparkles     = p => <Icon name="sparkles" {...p} />;
+const Archive      = p => <Icon name="archive" {...p} />;
+const AlertOctagon = p => <Icon name="alert-octagon" {...p} />;
+const Settings     = p => <Icon name="settings" {...p} />;
+
+// ── DESIGN TOKENS ─────────────────────────────────────────────────────────────
+const T = {
+  cream:"#FAF7F2", cream2:"#F5F0E8", cream3:"#EDE5D8",
+  sage:"#87A878",  sage2:"#A8C4A0", sage3:"#C8DCC2", sage4:"#E4EEE1",
+  peach:"#E8A090", peach3:"#F8D8D0", peach4:"#FDF0EC",
+  rose:"#C4807A",
+  terra:"#B8714A", terra2:"#C8886A",
+  honey:"#D4A84B", honey2:"#E4C070", honey3:"#FDF0D0",
+  sky:"#7AA8C4",   sky3:"#D8EEF8",
+  frozen:"#6AA8D4", frozen3:"#D0E8F4",
+  alert:"#D44040", alert2:"#E87070", alert3:"#FDE8E8",
+  warn:"#C87820",  warn2:"#E4A050", warn3:"#FEF3DC",
+  ok:"#5AA870",    ok3:"#E0F0E4",
+  text:"#3D2B1F",  textMid:"#6B4E3D", textSoft:"#9C7B6A", textFaint:"#C4A898",
+};
+
+const DAYS_ZH   = ["日","一","二","三","四","五","六"];
+const BUSY_DAYS = [3, 4];
+
+const SECTIONS = [
+  { id:"fridge",   label:"雪櫃",   labelEn:"Fridge",    emoji:"🧊", color:T.sky,    bg:T.sky3,    alertDays:3  },
+  { id:"frozen",   label:"冷凍",   labelEn:"Freezer",   emoji:"❄️", color:T.frozen, bg:T.frozen3, alertDays:90 },
+  { id:"pantry",   label:"食品櫃", labelEn:"Pantry",    emoji:"🪴", color:T.sage,   bg:T.sage4,   alertDays:30 },
+  { id:"leftover", label:"剩菜",   labelEn:"Leftovers", emoji:"🍱", color:T.honey,  bg:T.honey3,  alertDays:2  },
+];
+
+const FAMILY = [
+  { id:"scarlett", label:"Scarlett", emoji:"🌸", color:"#C4607A", bg:"#FDE8EF" },
+  { id:"serene",   label:"Serene",   emoji:"🌿", color:"#5A8A6A", bg:"#E0F0E4" },
+  { id:"sophia",   label:"Sophia",   emoji:"⭐", color:"#B07820", bg:"#FDF0D0" },
+  { id:"pat",      label:"Pat",      emoji:"🦁", color:"#7860B0", bg:"#EDE8F8" },
+];
+
+const CUISINES = [
+  { id:"all",      label:"全部",    emoji:"🌍", color:T.textMid },
+  { id:"chinese",  label:"中式",    emoji:"🏮", color:"#B84040" },
+  { id:"japanese", label:"日式",    emoji:"🌸", color:"#C46090" },
+  { id:"korean",   label:"韓式",    emoji:"🌶️", color:"#C45040" },
+  { id:"thai",     label:"泰式",    emoji:"🌺", color:"#7AAA50" },
+  { id:"western",  label:"Western", emoji:"🫐", color:"#5080B8" },
+  { id:"dessert",  label:"甜品",    emoji:"🍰", color:"#B060A0" },
+];
+
+const EMOJI_SETS = {
+  fridge:   ["🥚","🧀","🥛","🌿","🥩","🍗","🥓","🐟","🦐","🥬","🍅","🥕","🥦","🌽","🫑","🍄","🧆","🥗","🚫"],
+  frozen:   ["🍗","🥩","🐟","🦐","🫔","🥟","🍕","🧊","🥜","🌽","🫘","🥦","🍱","🥘","🍲","🚫"],
+  pantry:   ["🍚","🍝","🍞","🫘","🫙","🧂","🌾","🧴","🫒","🍯","🧈","🥫","🥜","🌰","🍵","☕","🫖","🚫"],
+  leftover: ["🍚","🍲","🥘","🍝","🍳","🥬","🍱","🥗","🍜","🥙","🫕","🍛","🥞","🧆","🚫"],
+};
+
+const ING_QUICK = {
+  fridge:   [{n:"雞蛋",e:"🥚"},{n:"芝士",e:"🧀"},{n:"牛奶",e:"🥛"},{n:"韭蔥",e:"🌿"},{n:"雞肉",e:"🍗"},{n:"豬肉",e:"🥩"},{n:"蝦",e:"🦐"},{n:"番茄",e:"🍅"},{n:"菠菜",e:"🥬"},{n:"甘筍",e:"🥕"}],
+  frozen:   [{n:"雞肉",e:"🍗"},{n:"豬肉",e:"🥩"},{n:"牛肉",e:"🥩"},{n:"魚片",e:"🐟"},{n:"蝦",e:"🦐"},{n:"餃子",e:"🥟"},{n:"湯圓",e:"⚪"},{n:"薯條",e:"🍟"}],
+  pantry:   [{n:"白米",e:"🍚"},{n:"意粉",e:"🍝"},{n:"麵包",e:"🍞"},{n:"茄汁豆",e:"🫘"},{n:"生抽",e:"🫙"},{n:"蠔油",e:"🫙"},{n:"薯仔",e:"🥔"},{n:"洋蔥",e:"🧅"},{n:"菜脯",e:"🥒"},{n:"花生",e:"🥜"}],
+  leftover: [{n:"昨晚剩飯",e:"🍚"},{n:"雞湯",e:"🍲"},{n:"炒菜",e:"🥬"},{n:"燉肉",e:"🥘"},{n:"炒飯",e:"🍳"},{n:"意粉",e:"🍝"},{n:"湯",e:"🍜"},{n:"咖喱",e:"🍛"}],
+};
+
+const UNITS_BY_SECTION = {
+  fridge:   ["個","隻","克","公斤","包","盒","條","片","塊","罐","份"],
+  frozen:   ["克","公斤","個","包","袋","盒","份","條"],
+  pantry:   ["公斤","克","罐","樽","包","袋","個","份","毫升","公升"],
+  leftover: ["碗","盒","煲","碟","份","袋"],
+};
+
+const DEFAULT_ESSENTIALS = [
+  { name:"雞蛋",   emoji:"🥚", section:"fridge"  },
+  { name:"牛奶",   emoji:"🥛", section:"fridge"  },
+  { name:"韭蔥",   emoji:"🌿", section:"fridge"  },
+  { name:"白米",   emoji:"🍚", section:"pantry"  },
+  { name:"雞肉",   emoji:"🍗", section:"frozen"  },
+];
+
+// ── AI VISION ──────────────────────────────────────────────────────────────────
+async function callVisionAI(base64, mediaType, mode) {
+  // Uses Cloudflare Worker proxy → Gemini 1.5 Flash
+  const API_URL = "https://kitchen-magic-ai.mktg201.workers.dev";
+
+  const isRestock = mode === "restock";
+  const prompt = isRestock
+    ? `You are analyzing a grocery or kitchen photo. Identify ALL visible food items. For each item decide which storage: fridge, frozen, or pantry. Reply with ONLY a valid JSON object, no markdown, no extra text: {"mode":"restock","items":[{"name":"雞蛋","nameEn":"Eggs","emoji":"🥚","section":"fridge","qty":6,"unit":"個","confidence":"high"}],"summary":"找到 N 件食材"}`
+    : `You are analyzing a photo of empty packaging or a fridge. Identify items that are EMPTY or USED UP. Reply with ONLY a valid JSON object, no markdown: {"mode":"usedup","items":[{"name":"牛奶","nameEn":"Milk","emoji":"🥛","section":"fridge","confidence":"high"}],"summary":"發現 N 件需補充"}`;
+
+  const body = {
+    contents: [{
+      parts: [
+        { inline_data: { mime_type: mediaType, data: base64 } },
+        { text: prompt }
+      ]
+    }],
+    generationConfig: { temperature: 0.1, maxOutputTokens: 2048 }
+  };
+
+  let res;
+  try {
+    res = await fetch(API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch(netErr) {
+    throw new Error("網絡連接失敗: " + netErr.message);
+  }
+
+  let rawText;
+  try { rawText = await res.text(); } catch(e) { throw new Error("讀取回應失敗"); }
+
+  if (!res.ok) {
+    throw new Error("API錯誤 " + res.status + ": " + rawText.slice(0, 200));
+  }
+
+  let envelope;
+  try { envelope = JSON.parse(rawText); } catch(e) {
+    throw new Error("回應非JSON (" + rawText.length + " chars): " + rawText.slice(0, 200));
+  }
+
+  if (envelope.error) {
+    throw new Error("Gemini錯誤: " + (envelope.error.message || JSON.stringify(envelope.error)));
+  }
+
+  const text = envelope && envelope.candidates && envelope.candidates[0] &&
+    envelope.candidates[0].content && envelope.candidates[0].content.parts &&
+    envelope.candidates[0].content.parts[0] && envelope.candidates[0].content.parts[0].text;
+  if (!text) throw new Error("AI無回應 — 回應內容: " + rawText.slice(0, 200));
+
+  const start = text.indexOf("{"); const end = text.lastIndexOf("}");
+  if (start === -1 || end === -1) throw new Error("AI回應格式錯誤: " + text.slice(0, 100));
+
+  try { return JSON.parse(text.slice(start, end + 1)); }
+  catch(e) { throw new Error("JSON解析失敗: " + text.slice(0, 100)); }
+}
+
+// ── GOOGLE SHEETS ──────────────────────────────────────────────────────────────
+const SHEET_ID  = "1r1ly3ojY624Vcuae-gumuGOTqBzsl2fbO4E7sfOUz2w";
+const PROXY_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=0`;
+
+function parseCSVtoRecipes(text) {
+  const lines = text.trim().split("\n").filter(Boolean);
+  if (lines.length < 2) return [];
+  const parseLine = (line) => {
+    const cols = []; let cur = "", inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (c === '"') { if (inQ && line[i+1] === '"') { cur += '"'; i++; } else inQ = !inQ; }
+      else if (c === "," && !inQ) { cols.push(cur.trim()); cur = ""; }
+      else cur += c;
+    }
+    cols.push(cur.trim()); return cols;
+  };
+  const headers = parseLine(lines[0]).map(h => h.toLowerCase().replace(/\s/g,""));
+  const colIdx = (candidates) => { for (const c of candidates) { const i = headers.findIndex(h => h.includes(c)); if (i !== -1) return i; } return -1; };
+  const COL = {
+    name:       colIdx(["名稱","食譜名","recipe","name","title","標題"]),
+    ingredients:colIdx(["食材","材料","ingredient","ingredients"]),
+    tags:       colIdx(["標籤","分類","tag","tags","type","類型","cuisine"]),
+    time:       colIdx(["時間","烹飪時間","分鐘","minutes","time","min"]),
+    emoji:      colIdx(["emoji","表情","icon"]),
+    notes:      colIdx(["備注","備註","notes","note","tips","提示"]),
+    steps:      colIdx(["步驟","做法","steps","instructions"]),
+    cuisine:    colIdx(["菜系","cuisine","style"]),
+    favourites: colIdx(["喜歡","最愛","favourite","favorites","family"]),
+  };
+  const getCol = (cols, idx) => idx !== -1 ? (cols[idx] || "").replace(/^"|"$/g,"").trim() : "";
+  const tagToCuisine = (rawTags, rawCuisine) => {
+    const combined = (rawTags + " " + rawCuisine).toLowerCase();
+    if (combined.includes("日") || combined.includes("japan"))   return "japanese";
+    if (combined.includes("韓") || combined.includes("korea"))   return "korean";
+    if (combined.includes("泰") || combined.includes("thai"))    return "thai";
+    if (combined.includes("西") || combined.includes("western") || combined.includes("europe")) return "western";
+    if (combined.includes("甜") || combined.includes("dessert") || combined.includes("cake"))   return "dessert";
+    return "chinese";
+  };
+  const recipes = [];
+  lines.slice(1).forEach((line, idx) => {
+    const cols = parseLine(line);
+    const name = getCol(cols, COL.name); if (!name) return;
+    const rawIng = getCol(cols, COL.ingredients);
+    const rawTags = getCol(cols, COL.tags);
+    const rawTime = getCol(cols, COL.time);
+    const rawCuisine = getCol(cols, COL.cuisine);
+    const ingredients = rawIng ? rawIng.split(/[、,，\n\/]/).map(s => s.trim()).filter(Boolean) : [];
+    const tags = rawTags ? rawTags.split(/[、,，\n]/).map(s => s.trim()).filter(Boolean) : [];
+    const time = parseInt(rawTime) || 30;
+    const emoji = getCol(cols, COL.emoji) || "🍽️";
+    const notes = getCol(cols, COL.notes);
+    const rawSteps = getCol(cols, COL.steps);
+    const steps = rawSteps ? rawSteps.split(/[。\n]/).map(s => s.trim()).filter(Boolean) : [];
+    const rawFav = getCol(cols, COL.favourites).toLowerCase();
+    const favourites = FAMILY.filter(f => rawFav.includes(f.label.toLowerCase()) || rawFav.includes(f.id)).map(f => f.id);
+    const cuisine = tagToCuisine(rawTags, rawCuisine);
+    const palette = [T.honey, T.peach, T.sage, T.terra2, T.sky, T.rose, T.sage2, T.honey2];
+    const color = palette[idx % palette.length];
+    recipes.push({ id:`sheet_${idx+1}`, title:name, emoji, cuisine, time, color, tags, needs:ingredients, optional:[], steps, notes, favourites, fasterMethod:null, fromSheet:true });
+  });
+  return recipes;
+}
+
+function useSheetRecipes() {
+  const [sheetRecipes, setSheetRecipes] = useState([]);
+  const [status, setStatus] = useState("idle");
+  const [lastSync, setLastSync] = useState(null);
+  const [errorMsg, setErrorMsg] = useState("");
+  const abortRef = useRef(null);
+  const fetchRecipes = useCallback(async () => {
+    if (abortRef.current) abortRef.current.abort();
+    abortRef.current = new AbortController();
+    setStatus("loading"); setErrorMsg("");
+    try {
+      const res = await fetch(PROXY_URL, { signal: abortRef.current.signal, cache:"no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const text = await res.text();
+      setSheetRecipes(parseCSVtoRecipes(text));
+      setStatus("success"); setLastSync(new Date());
+    } catch(err) {
+      if (err.name === "AbortError") return;
+      setStatus("error"); setErrorMsg(err.message || "無法連接 Google Sheets");
+    }
+  }, []);
+  useEffect(() => { fetchRecipes(); return () => abortRef.current?.abort(); }, [fetchRecipes]);
+  return { sheetRecipes, status, lastSync, errorMsg, refresh: fetchRecipes };
+}
+
+// ── HELPERS ────────────────────────────────────────────────────────────────────
+const getDow   = () => new Date().getDay();
+const isBusy   = d => BUSY_DAYS.includes(d);
+const uid      = () => `${Date.now()}_${Math.floor(Math.random()*99999)}`;
+const todayStr = () => new Date().toISOString().split("T")[0];
+const daysDiff = dateStr => { if (!dateStr) return 0; return Math.floor((Date.now() - new Date(dateStr).getTime()) / 86400000); };
+const freshBadge = (days, alertDays) => {
+  if (days <= 0)                         return { text:"今日",        color:T.ok,    bg:T.ok3   };
+  if (days === 1)                        return { text:"1日前",       color:T.ok,    bg:T.ok3   };
+  if (days < Math.floor(alertDays*0.7)) return { text:`${days}日前`, color:T.ok,    bg:T.ok3   };
+  if (days < alertDays)                  return { text:`${days}日前`, color:T.warn,  bg:T.warn3 };
+  return                                        { text:`${days}日 ⚠️`,color:T.alert, bg:T.alert3};
+};
+
+// ── INIT ITEMS ─────────────────────────────────────────────────────────────────
+const mk = (id,name,emoji,section,dateAdded,qty,unit,notes="") =>
+  ({id:`init_${id}`,name,emoji,section,dateAdded,qty,unit,notes});
+const INIT_ITEMS = [
+  mk(1,"雞蛋","🥚","fridge","2025-05-12",6,"隻"),
+  mk(2,"韭蔥","🌿","fridge","2025-05-11",2,"條"),
+  mk(3,"芝士","🧀","fridge","2025-05-10",1,"包","快到期"),
+  mk(4,"牛奶","🥛","fridge","2025-05-13",1,"公升"),
+  mk(5,"雞肉","🍗","frozen","2025-04-20",500,"克"),
+  mk(6,"豬肉","🥩","frozen","2025-04-25",300,"克"),
+  mk(7,"白米","🍚","pantry","2025-05-01",2,"公斤"),
+  mk(8,"茄汁豆","🫘","pantry","2025-05-05",2,"罐"),
+  mk(9,"生抽","🫙","pantry","2025-04-15",1,"樽"),
+  mk(10,"薯仔","🥔","pantry","2025-05-08",4,"個"),
+  mk(11,"昨晚剩飯","🍚","leftover","2025-05-13",1,"碗"),
+  mk(12,"雞湯","🍲","leftover","2025-05-11",1,"煲","細路唔食咗"),
+];
+
+const LOCAL_RECIPES = [
+  { id:1, title:"日式蔥燒雞",   emoji:"🍗", cuisine:"japanese", time:15, color:T.honey,
+    tags:["忙日快手","日式"], needs:["雞肉","韭蔥"], optional:["麻油","蒜頭"],
+    steps:["雞肉醃味醂+生抽10分鐘","韭蔥切段","煎雞至金黃","加韭蔥炒香收汁"],
+    notes:"忙日15分鐘搞掂！", favourites:["pat","serene"], fasterMethod:null },
+  { id:2, title:"雞煲（小辣）", emoji:"🍲", cuisine:"chinese",  time:45, color:T.peach,
+    tags:["中式","小辣"], needs:["雞肉","洋蔥","乾蔥頭","芫荽"], optional:["蒜頭"],
+    steps:["爆香乾蔥頭","雞件炒至微焦","加醬油、蠔油、辣椒","細火煮20分鐘","收汁撒芫荽"],
+    notes:"乾蔥頭係靈魂！", favourites:["scarlett","sophia","pat"], fasterMethod:null },
+  { id:3, title:"菜脯蛋",       emoji:"🥚", cuisine:"chinese",  time:12, color:T.sage,
+    tags:["忙日快手","素食"], needs:["菜脯","雞蛋"], optional:["生抽"],
+    steps:["菜脯浸水去鹹切碎","蛋液加菜脯","多油煎至金黃兩面"],
+    notes:"唔用加鹽！多油才夠香", favourites:["serene","sophia"], fasterMethod:null },
+  { id:4, title:"蒸蛋",         emoji:"🥣", cuisine:"chinese",  time:12, color:T.honey2,
+    tags:["忙日快手","滑嫩"], needs:["雞蛋"], optional:["生抽","麻油"],
+    steps:["蛋液:水=1:1","過篩去泡","保鮮紙包好碗口","大火蒸1分鐘→細火10分鐘","加生抽麻油"],
+    notes:"保鮮紙係關鍵！1:1水蛋", favourites:["sophia","scarlett"],
+    fasterMethod:{ label:"大火1分→細火10分", icon:"flame", tip:"大火1分讓蛋液定型，細火10分蒸至嫩滑。" } },
+  { id:5, title:"Jacket Potato",emoji:"🥔", cuisine:"western",  time:30, color:T.terra2,
+    tags:["Western","Quick Fix"], needs:["薯仔","牛油","芝士"], optional:["茄汁豆","煙肉"],
+    steps:["Scrub and pierce potato all over","Microwave HIGH 10 mins, turn halfway","Oven 220°C for 20 mins","Cut cross, squeeze open, add butter & cheese"],
+    notes:"Pierce first — or it explodes! 💥", favourites:["scarlett","sophia"],
+    fasterMethod:{ label:"Microwave 10m → Oven 20m", icon:"microwave", tip:"Microwave cooks through, then oven gives crispy skin." } },
+];
+
+// ── LOADING CARD ───────────────────────────────────────────────────────────────
+function SheetLoadingCard() {
+  const [dots, setDots] = useState("·");
+  const frames = ["🗒️","📖","📋","🔍"];
+  const [frame, setFrame] = useState(0);
+  useEffect(() => {
+    const d = setInterval(() => setDots(p => p.length >= 3 ? "·" : p + "·"), 400);
+    const f = setInterval(() => setFrame(p => (p+1) % frames.length), 600);
+    return () => { clearInterval(d); clearInterval(f); };
+  }, []);
+  return (
+    <div className="rounded-3xl overflow-hidden" style={{ border:`2px dashed ${T.honey2}`, background:T.honey3 }}>
+      <div className="flex items-center gap-4 px-5 py-5">
+        <div className="w-14 h-14 rounded-2xl flex items-center justify-center text-3xl flex-shrink-0"
+          style={{ background:T.cream2, animation:"wobble 1.2s ease-in-out infinite" }}>{frames[frame]}</div>
+        <div>
+          <p className="font-black text-base leading-tight" style={{ color:T.terra, fontFamily:"Georgia,serif" }}>
+            正在翻找食譜筆記{dots}
+          </p>
+          <p className="text-xs mt-1" style={{ color:T.terra2 }}>從 Google Sheets 同步中，請稍候</p>
+          <div className="flex gap-1 mt-2.5">
+            {[0,1,2,3].map(i => (
+              <div key={i} className="h-1.5 rounded-full"
+                style={{ width:i===frame?20:8, background:i===frame?T.honey:T.honey2, transition:"width .3s ease" }} />
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── SYNC STATUS BAR ────────────────────────────────────────────────────────────
+function SyncStatusBar({ status, lastSync, errorMsg, onRefresh }) {
+  const [spinning, setSpinning] = useState(false);
+  const handle = () => { setSpinning(true); onRefresh(); setTimeout(() => setSpinning(false), 1500); };
+  const fmtTime = d => { if (!d) return ""; return `${d.getHours().toString().padStart(2,"0")}:${d.getMinutes().toString().padStart(2,"0")}`; };
+  if (status === "loading") return null;
+  const isError = status === "error";
+  return (
+    <div className="flex items-center justify-between px-4 py-2.5 rounded-2xl mb-4"
+      style={{ background:isError?T.alert3:T.ok3, border:`1.5px solid ${isError?T.alert2:T.sage3}` }}>
+      <div className="flex items-center gap-2">
+        {isError ? <WifiOff size={13} style={{color:T.alert}} /> : <Wifi size={13} style={{color:T.ok}} />}
+        <div>
+          <p className="text-xs font-black" style={{ color:isError?T.alert:T.ok }}>
+            {isError ? "同步失敗" : `已同步 · ${fmtTime(lastSync)}`}
+          </p>
+          {isError && <p className="text-xs" style={{ color:T.rose }}>{errorMsg||"無法讀取 Google Sheets"} — 顯示本地食譜</p>}
+        </div>
+      </div>
+      <button onClick={handle} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-black active:scale-95"
+        style={{ background:isError?T.alert:T.sage, color:"#fff" }}>
+        <RefreshCw size={11} style={{ animation:spinning?"spin 1s linear infinite":"none" }} />重新整理
+      </button>
+    </div>
+  );
+}
+
+// ── HEADER REFRESH BUTTON ──────────────────────────────────────────────────────
+function HeaderRefreshButton({ status, onRefresh }) {
+  const [spinning, setSpinning] = useState(false);
+  const isLoading = status === "loading";
+  const handle = () => { if (isLoading) return; setSpinning(true); onRefresh(); setTimeout(() => setSpinning(false), 1500); };
+  return (
+    <button onClick={handle} disabled={isLoading}
+      className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-black active:scale-95 disabled:opacity-60"
+      style={{ background:isLoading?T.honey3:T.sage4, color:isLoading?T.terra:T.sage, border:`1.5px solid ${isLoading?T.honey2:T.sage3}` }}>
+      <RefreshCw size={11} style={{ animation:(spinning||isLoading)?"spin 1s linear infinite":"none" }} />
+      {isLoading ? "同步中…" : "重新整理"}
+    </button>
+  );
+}
+
+// ── ADD ITEM MODAL ─────────────────────────────────────────────────────────────
+function AddItemModal({ defaultSection, onAdd, onClose }) {
+  const [section, setSection]   = useState(defaultSection||"fridge");
+  const [name, setName]         = useState("");
+  const [emoji, setEmoji]       = useState("🥚");
+  const [qty, setQty]           = useState(1);
+  const [unit, setUnit]         = useState("個");
+  const [dateStr, setDateStr]   = useState(todayStr());
+  const [notes, setNotes]       = useState("");
+  const [emojiTab, setEmojiTab] = useState(false);
+  useEffect(() => { setEmoji(EMOJI_SETS[section]?.[0]||"🥘"); setUnit(UNITS_BY_SECTION[section]?.[0]||"份"); }, [section]);
+  useEffect(() => { document.body.style.overflow = "hidden"; return () => { document.body.style.overflow = ""; }; }, []);
+  const sec = SECTIONS.find(s => s.id === section);
+  const quickList = ING_QUICK[section]||[]; const emojiList = EMOJI_SETS[section]||[]; const unitList = UNITS_BY_SECTION[section]||["份"];
+  const pickQuick = ({n,e}) => { setName(n); setEmoji(e); setEmojiTab(false); };
+  const submit = () => { if (!name.trim()) return; onAdd({id:uid(),name:name.trim(),emoji,section,qty:Number(qty),unit,dateAdded:dateStr,notes}); onClose(); };
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center" style={{ background:"#3D2B1F88" }}
+      onMouseDown={e => e.target===e.currentTarget && onClose()}>
+      <div className="w-full rounded-t-3xl shadow-2xl overflow-hidden" style={{ background:T.cream, maxHeight:"92vh", display:"flex", flexDirection:"column" }}>
+        <div className="flex-shrink-0 px-5 pt-5 pb-3 flex items-center justify-between" style={{ borderBottom:`1.5px solid ${T.cream3}` }}>
+          <div className="flex items-center gap-2">
+            <span className="text-2xl">{sec.emoji}</span>
+            <h3 className="font-black text-lg" style={{ color:T.text, fontFamily:"Georgia,serif" }}>{section==="leftover"?"記錄剩菜":"加入食材"}</h3>
+          </div>
+          <button onClick={onClose} className="w-9 h-9 rounded-full flex items-center justify-center" style={{ background:T.cream3 }}>
+            <X size={16} style={{color:T.textMid}} />
+          </button>
+        </div>
+        <div className="overflow-y-auto flex-1 px-5 pt-4 pb-8 space-y-4">
+          <div>
+            <p className="text-xs font-black uppercase tracking-widest mb-2" style={{ color:T.textSoft }}>存放位置</p>
+            <div className="grid grid-cols-2 gap-2">
+              {SECTIONS.map(s => (
+                <button key={s.id} type="button" onClick={() => setSection(s.id)}
+                  className="flex items-center gap-2 px-3 py-2.5 rounded-2xl border-2 font-bold text-sm"
+                  style={section===s.id ? {background:s.bg,borderColor:s.color,color:s.color} : {background:T.cream2,borderColor:T.cream3,color:T.textSoft}}>
+                  <span>{s.emoji}</span>{s.label}
+                  {section===s.id && <Check size={13} style={{marginLeft:"auto"}} />}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <p className="text-xs font-black uppercase tracking-widest mb-2" style={{ color:T.textSoft }}>快速選擇</p>
+            <div className="flex flex-wrap gap-1.5">
+              {quickList.map(q => (
+                <button key={q.n} type="button" onClick={() => pickQuick({n:q.n,e:q.e})}
+                  className="text-xs px-2.5 py-1 rounded-full border-2 font-semibold"
+                  style={name===q.n ? {background:sec.color,color:"#fff",borderColor:sec.color} : {background:T.cream2,color:T.textMid,borderColor:T.cream3}}>
+                  {q.e} {q.n}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <p className="text-xs font-black uppercase tracking-widest mb-1" style={{ color:T.textSoft }}>
+              {section==="leftover"?"剩菜名稱":"食材名稱"} <span style={{color:T.alert}}>*</span>
+            </p>
+            <input value={name} onChange={e => setName(e.target.value)} placeholder={section==="leftover"?"例如：昨晚剩飯…":"例如：韭蔥…"}
+              className="w-full px-3 py-2.5 rounded-xl border-2 text-sm outline-none"
+              style={{ background:T.cream2, borderColor:name?sec.color:T.cream3, color:T.text }} />
+          </div>
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-black uppercase tracking-widest" style={{ color:T.textSoft }}>表情符號</p>
+              <button type="button" onClick={() => setEmojiTab(v=>!v)}
+                className="text-xs px-2.5 py-1 rounded-full font-bold flex items-center gap-1" style={{ background:T.sage4, color:T.sage }}>
+                {emojiTab?"收起":"更多"} <ChevronDown size={10} style={{transform:emojiTab?"rotate(180deg)":"none",transition:"transform .2s"}} />
+              </button>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="w-14 h-14 rounded-2xl flex items-center justify-center text-4xl border-2" style={{ background:sec.bg, borderColor:sec.color }}>{emoji}</div>
+              <div className="flex-1">
+                <p className="text-xs mb-1" style={{ color:T.textSoft }}>或直接輸入 emoji：</p>
+                <input value={emoji} onChange={e => setEmoji(e.target.value)} maxLength={4}
+                  className="w-20 px-3 py-2 rounded-xl border-2 text-2xl text-center outline-none"
+                  style={{ background:T.cream2, borderColor:T.cream3, color:T.text }} />
+              </div>
+            </div>
+            {emojiTab && (
+              <div className="grid grid-cols-9 gap-1.5 mt-3 p-3 rounded-2xl" style={{ background:T.cream3 }}>
+                {emojiList.map(e => (
+                  <button key={e} type="button" onClick={() => { setEmoji(e); setEmojiTab(false); }}
+                    className="text-2xl w-9 h-9 rounded-xl flex items-center justify-center"
+                    style={emoji===e ? {background:sec.color} : {background:T.cream2}}>{e}</button>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <p className="text-xs font-black uppercase tracking-widest mb-1" style={{ color:T.textSoft }}>數量</p>
+              <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl border-2" style={{ background:T.cream2, borderColor:T.cream3 }}>
+                <button type="button" onClick={() => setQty(q => Math.max(0.5, parseFloat((q-0.5).toFixed(1))))}
+                  className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0" style={{ background:T.cream3 }}>
+                  <Minus size={11} style={{color:T.textMid}} />
+                </button>
+                <input type="number" min="0.5" step="0.5" value={qty} onChange={e => setQty(parseFloat(e.target.value)||1)}
+                  className="flex-1 text-center font-black text-sm outline-none bg-transparent" style={{ color:T.text, width:"40px" }} />
+                <button type="button" onClick={() => setQty(q => parseFloat((q+0.5).toFixed(1)))}
+                  className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0" style={{ background:T.sage3 }}>
+                  <Plus size={11} style={{color:T.sage}} />
+                </button>
+              </div>
+            </div>
+            <div>
+              <p className="text-xs font-black uppercase tracking-widest mb-1" style={{ color:T.textSoft }}>單位</p>
+              <select value={unit} onChange={e => setUnit(e.target.value)}
+                className="w-full px-3 py-2.5 rounded-xl border-2 text-sm outline-none"
+                style={{ background:T.cream2, borderColor:T.cream3, color:T.text }}>
+                {unitList.map(u => <option key={u} value={u}>{u}</option>)}
+              </select>
+            </div>
+          </div>
+          <div>
+            <p className="text-xs font-black uppercase tracking-widest mb-1" style={{ color:T.textSoft }}>
+              {section==="leftover"?"🍳 煮食日期":"📅 加入日期"}
+            </p>
+            <input type="date" value={dateStr} onChange={e => setDateStr(e.target.value)}
+              className="w-full px-3 py-2.5 rounded-xl border-2 text-sm outline-none"
+              style={{ background:T.cream2, borderColor:T.cream3, color:T.text }} />
+          </div>
+          <div>
+            <p className="text-xs font-black uppercase tracking-widest mb-1" style={{ color:T.textSoft }}>備注（可選）</p>
+            <input value={notes} onChange={e => setNotes(e.target.value)} placeholder="例如：媽媽帶嚟、特價買的…"
+              className="w-full px-3 py-2.5 rounded-xl border-2 text-sm outline-none"
+              style={{ background:T.cream2, borderColor:T.cream3, color:T.text }} />
+          </div>
+          <button type="button" onClick={submit} disabled={!name.trim()}
+            className="w-full py-4 rounded-2xl font-black text-white flex items-center justify-center gap-2 active:scale-95 disabled:opacity-40"
+            style={{ background:`linear-gradient(135deg,${sec.color},${sec.color}bb)` }}>
+            <Check size={17} />{section==="leftover"?"記錄剩菜":`加入${sec.label}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── FOOD ITEM ROW ──────────────────────────────────────────────────────────────
+function FoodItemRow({ item, onDelete }) {
+  const sec = SECTIONS.find(s => s.id === item.section);
+  const days = daysDiff(item.dateAdded);
+  const badge = freshBadge(days, sec.alertDays);
+  const isAlert = days >= sec.alertDays;
+  const isWarn  = !isAlert && days >= Math.floor(sec.alertDays * 0.7);
+  const [confirming, setConfirming] = useState(false);
+  return (
+    <div className="flex items-center gap-3 px-3.5 py-3 rounded-2xl"
+      style={{ background:isAlert?T.alert3:isWarn?T.warn3:T.cream2, border:`1.5px solid ${isAlert?T.alert2:isWarn?T.warn2:T.cream3}` }}>
+      <span className="text-2xl flex-shrink-0">{isAlert?"⚠️":item.emoji}</span>
+      <div className="flex-1 min-w-0">
+        <p className="font-bold text-sm truncate" style={{ color:isAlert?T.alert:isWarn?T.warn:T.text }}>
+          {isAlert && <span>{item.emoji} </span>}{item.name}
+        </p>
+        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+          <span className="text-xs" style={{ color:T.textFaint }}>{item.qty}{item.unit}</span>
+          <span className="text-xs px-2 py-0.5 rounded-full font-bold" style={{ background:badge.bg, color:badge.color }}>{badge.text}</span>
+          {item.notes && <span className="text-xs italic truncate" style={{ color:T.textSoft, maxWidth:100 }}>{item.notes}</span>}
+        </div>
+      </div>
+      {!confirming ? (
+        <button type="button" onClick={() => setConfirming(true)}
+          className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0" style={{ background:T.cream3 }}>
+          <Trash2 size={12} style={{color:T.textSoft}} />
+        </button>
+      ) : (
+        <div className="flex items-center gap-1 flex-shrink-0">
+          <button type="button" onClick={() => onDelete(item.id)}
+            className="text-xs px-2.5 py-1.5 rounded-xl font-black text-white" style={{ background:T.alert }}>刪除</button>
+          <button type="button" onClick={() => setConfirming(false)}
+            className="text-xs px-2.5 py-1.5 rounded-xl font-bold" style={{ background:T.cream3, color:T.textMid }}>取消</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── STORAGE TAB ────────────────────────────────────────────────────────────────
+function StorageTab({ items, setItems }) {
+  const [modalOpen, setModalOpen]       = useState(false);
+  const [modalSection, setModalSection] = useState("fridge");
+  const [active, setActive]             = useState("all");
+  const [search, setSearch]             = useState("");
+  const openModal = (section="fridge") => { setModalSection(section); setModalOpen(true); };
+  const deleteItem = useCallback(id => setItems(p => p.filter(i => i.id !== id)), [setItems]);
+  const addItem    = useCallback(item => setItems(p => [item,...p]), [setItems]);
+  const alerts = useMemo(() => items.filter(i => { const s=SECTIONS.find(x=>x.id===i.section); return s&&daysDiff(i.dateAdded)>=s.alertDays; }), [items]);
+  const warns  = useMemo(() => items.filter(i => { const s=SECTIONS.find(x=>x.id===i.section); const d=daysDiff(i.dateAdded); return s&&d>=Math.floor(s.alertDays*0.7)&&d<s.alertDays; }), [items]);
+  const counts = useMemo(() => Object.fromEntries(SECTIONS.map(s => [s.id, items.filter(i => i.section===s.id).length])), [items]);
+  const alertCounts = useMemo(() => Object.fromEntries(SECTIONS.map(s => [s.id, items.filter(i => i.section===s.id&&daysDiff(i.dateAdded)>=s.alertDays).length])), [items]);
+  const displayed = useMemo(() => items.filter(i => {
+    if (active!=="all" && i.section!==active) return false;
+    if (search && !i.name.toLowerCase().includes(search.toLowerCase())) return false;
+    return true;
+  }).sort((a,b) => daysDiff(b.dateAdded) - daysDiff(a.dateAdded)), [items, active, search]);
+  const grouped = useMemo(() => {
+    if (active !== "all") { const sec=SECTIONS.find(s=>s.id===active); return sec?[{sec,list:displayed}]:[]; }
+    return SECTIONS.map(sec => ({sec, list:displayed.filter(i=>i.section===sec.id)})).filter(g=>g.list.length>0);
+  }, [displayed, active]);
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h2 className="font-black text-xl" style={{ color:T.text, fontFamily:"Georgia,serif" }}>🏠 食物追蹤</h2>
+          <p className="text-xs mt-0.5" style={{ color:T.textSoft }}>{items.length} 樣食物
+            {alerts.length>0 && <span style={{color:T.alert}}> · {alerts.length} 個需要注意！</span>}
+          </p>
+        </div>
+        <button type="button" onClick={() => openModal("fridge")}
+          className="flex items-center gap-1.5 px-4 py-2.5 rounded-full font-black text-white shadow-sm active:scale-95"
+          style={{ background:`linear-gradient(135deg,${T.sage},${T.sage2})` }}>
+          <Plus size={15} />加入食材
+        </button>
+      </div>
+      {alerts.length>0 && (
+        <div className="mb-4 rounded-2xl px-4 py-3 flex items-start gap-3" style={{ background:T.alert3, border:`2px solid ${T.alert2}` }}>
+          <Bell size={17} style={{color:T.alert,flexShrink:0,marginTop:1}} />
+          <div>
+            <p className="font-black text-sm" style={{ color:T.alert }}>⚠️ {alerts.length} 樣食物需要處理！</p>
+            <p className="text-xs mt-0.5 leading-relaxed" style={{ color:T.rose }}>{alerts.map(a=>`${a.emoji}${a.name}`).join("、")}</p>
+          </div>
+        </div>
+      )}
+      {warns.length>0 && alerts.length===0 && (
+        <div className="mb-4 rounded-2xl px-4 py-3 flex items-center gap-3" style={{ background:T.warn3, border:`1.5px solid ${T.warn2}` }}>
+          <Timer size={15} style={{color:T.warn}} />
+          <p className="text-sm font-semibold" style={{ color:T.warn }}>{warns.map(w=>`${w.emoji}${w.name}`).join("、")} — 快到期，安排食用</p>
+        </div>
+      )}
+      <div className="grid grid-cols-2 gap-2 mb-4">
+        {SECTIONS.map(sec => {
+          const isActive = active===sec.id; const ac = alertCounts[sec.id]||0;
+          return (
+            <button key={sec.id} type="button" onClick={() => setActive(isActive?"all":sec.id)}
+              className="rounded-2xl p-3 text-left border-2 active:scale-95"
+              style={isActive ? {background:sec.bg,borderColor:sec.color,boxShadow:`0 4px 12px ${sec.color}44`} : {background:T.cream2,borderColor:T.cream3}}>
+              <div className="flex items-start justify-between mb-1.5">
+                <span className="text-2xl">{sec.emoji}</span>
+                {ac>0 && <span className="text-xs w-5 h-5 rounded-full flex items-center justify-center font-black text-white" style={{background:T.alert}}>{ac}</span>}
+              </div>
+              <p className="font-black text-sm leading-tight" style={{ color:isActive?sec.color:T.text }}>{sec.label}</p>
+              <p className="text-xs" style={{ color:T.textFaint }}>{counts[sec.id]||0} 樣</p>
+            </button>
+          );
+        })}
+      </div>
+      <div className="relative mb-4">
+        <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2" style={{color:T.textFaint}} />
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="搜尋食材…"
+          className="w-full pl-8 pr-4 py-2.5 rounded-xl border-2 text-sm outline-none"
+          style={{ background:T.cream2, borderColor:T.cream3, color:T.text }} />
+        {search && <button type="button" onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2"><X size={12} style={{color:T.textFaint}} /></button>}
+      </div>
+      {grouped.length===0 ? (
+        <div className="text-center py-16"><span className="text-5xl">🌿</span>
+          <p className="mt-3 font-black" style={{ color:T.textSoft, fontFamily:"Georgia,serif" }}>空空如也</p>
+          <p className="text-xs mt-1" style={{ color:T.textFaint }}>撳上面按鈕加入食材</p>
+        </div>
+      ) : (
+        <div className="space-y-6">
+          {grouped.map(({sec,list}) => (
+            <div key={sec.id}>
+              <div className="flex items-center gap-2 mb-2.5">
+                <span className="text-lg">{sec.emoji}</span>
+                <h3 className="font-black" style={{ color:sec.color, fontFamily:"Georgia,serif" }}>{sec.label}</h3>
+                <span className="text-xs px-2 py-0.5 rounded-full font-bold" style={{ background:sec.bg, color:sec.color }}>{list.length}</span>
+              </div>
+              <div className="space-y-2">{list.map(item => <FoodItemRow key={item.id} item={item} onDelete={deleteItem} />)}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      {modalOpen && <AddItemModal defaultSection={modalSection} onAdd={addItem} onClose={() => setModalOpen(false)} />}
+    </div>
+  );
+}
+
+// ── RECIPE CARD ────────────────────────────────────────────────────────────────
+function RecipeCard({ recipe, pantryNames, busyToday, onOpen }) {
+  const matched = recipe.needs.filter(n => pantryNames.includes(n)).length;
+  const pct = recipe.needs.length ? Math.round((matched/recipe.needs.length)*100) : 100;
+  const canMake = pct===100; const partial = pct>=50 && !canMake;
+  const cuisineObj = CUISINES.find(c => c.id===recipe.cuisine)||CUISINES[0];
+  return (
+    <div onClick={() => onOpen(recipe)}
+      className="rounded-3xl overflow-hidden cursor-pointer active:scale-[0.97]"
+      style={{ background:T.cream2, border:`2px solid ${canMake?recipe.color:T.cream3}`, boxShadow:canMake?`0 4px 20px ${recipe.color}33`:"0 2px 8px #3D2B1F0D", opacity:(!canMake&&!partial)?0.5:1 }}>
+      <div className="h-1.5" style={{ background:canMake?recipe.color:T.cream3 }} />
+      <div className="p-3.5">
+        {recipe.fromSheet && (
+          <div className="mb-1.5 inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-black" style={{ background:T.sky3, color:T.sky }}>
+            <Wifi size={8} />Sheets
+          </div>
+        )}
+        {busyToday && recipe.time<=20 && (
+          <div className="mb-1.5 inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-black" style={{ background:T.honey, color:"#fff" }}>
+            <Zap size={9} />Quick Fix
+          </div>
+        )}
+        <div className="flex items-start gap-2.5">
+          <span className="text-3xl flex-shrink-0">{recipe.emoji}</span>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1">
+              <h3 className="font-black text-sm flex-1 truncate" style={{ color:T.text, fontFamily:"Georgia,serif" }}>{recipe.title}</h3>
+              <span>{cuisineObj.emoji}</span>
+            </div>
+            <div className="flex flex-wrap gap-1 mt-1">
+              {recipe.tags.slice(0,2).map(t => (
+                <span key={t} className="text-xs px-1.5 py-0.5 rounded-full font-semibold" style={{ background:recipe.color+"22", color:recipe.color }}>{t}</span>
+              ))}
+              {recipe.fasterMethod && <span className="text-xs px-1.5 py-0.5 rounded-full font-semibold" style={{ background:T.honey3, color:T.terra }}>⚡快捷</span>}
+            </div>
+            {recipe.favourites?.length>0 && (
+              <div className="flex flex-wrap gap-1 mt-1.5">
+                {recipe.favourites.map(fid => { const m=FAMILY.find(f=>f.id===fid); return m?<span key={fid} className="text-xs px-1.5 py-0.5 rounded-full font-bold" style={{ background:m.bg, color:m.color }}>{m.emoji}{m.label}</span>:null; })}
+              </div>
+            )}
+            <div className="flex items-center gap-2 mt-2">
+              <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background:T.cream3 }}>
+                <div className="h-full rounded-full" style={{ width:`${pct}%`, background:canMake?recipe.color:partial?T.honey:T.cream3 }} />
+              </div>
+              <span className="text-xs font-black" style={{ color:canMake?recipe.color:partial?T.honey:T.textFaint }}>{matched}/{recipe.needs.length}</span>
+              <span className="text-xs flex items-center gap-0.5" style={{ color:T.textSoft }}><Clock size={9} />{recipe.time}分</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── RECIPE VIEW MODAL ──────────────────────────────────────────────────────────
+function RecipeViewModal({ recipe, pantryNames, onClose }) {
+  const [tab, setTab]   = useState("ingredients");
+  const [done, setDone] = useState([]);
+  const matched = recipe.needs.filter(n => pantryNames.includes(n)).length;
+  const pct = recipe.needs.length ? Math.round((matched/recipe.needs.length)*100) : 100;
+  const missing = recipe.needs.filter(n => !pantryNames.includes(n));
+  useEffect(() => { document.body.style.overflow = "hidden"; return () => { document.body.style.overflow = ""; }; }, []);
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center" style={{ background:"#3D2B1F99" }}
+      onMouseDown={e => e.target===e.currentTarget && onClose()}>
+      <div className="w-full rounded-t-3xl max-h-[92vh] overflow-y-auto shadow-2xl" style={{ background:T.cream }}>
+        <div className="relative h-44 flex items-center justify-center rounded-t-3xl"
+          style={{ background:`linear-gradient(135deg,${recipe.color}dd,${recipe.color}77)` }}>
+          <span className="text-8xl drop-shadow-lg">{recipe.emoji}</span>
+          <button onClick={onClose} className="absolute top-4 right-4 w-9 h-9 rounded-full flex items-center justify-center" style={{ background:"#ffffff33" }}>
+            <X size={15} color="#fff" />
+          </button>
+          {recipe.fromSheet && (
+            <div className="absolute top-4 left-4 flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-black" style={{ background:"#ffffff33", color:"#fff" }}>
+              <Wifi size={10} />來自 Sheets
+            </div>
+          )}
+          <div className="absolute bottom-3 left-4 flex flex-wrap gap-1">
+            {recipe.tags.map(t => <span key={t} className="text-xs px-2 py-0.5 rounded-full font-bold" style={{ background:"#ffffff44", color:"#fff" }}>{t}</span>)}
+          </div>
+        </div>
+        <div className="px-5 pb-8">
+          <div className="py-4 border-b" style={{ borderColor:T.cream3 }}>
+            <h2 className="text-2xl font-black" style={{ color:T.text, fontFamily:"Georgia,serif" }}>{recipe.title}</h2>
+            {recipe.favourites?.length>0 && (
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {recipe.favourites.map(fid => { const m=FAMILY.find(f=>f.id===fid); return m?<span key={fid} className="text-xs px-2 py-0.5 rounded-full font-bold" style={{ background:m.bg, color:m.color }}>{m.emoji}{m.label}</span>:null; })}
+              </div>
+            )}
+          </div>
+          {recipe.fasterMethod && (
+            <div className="rounded-2xl px-3 py-2.5 flex items-start gap-2 mt-3" style={{ background:T.honey3, border:`1.5px solid ${T.honey2}` }}>
+              {recipe.fasterMethod.icon==="microwave" ? <Microwave size={14} style={{color:T.terra,flexShrink:0,marginTop:2}} /> : <Flame size={14} style={{color:T.terra,flexShrink:0,marginTop:2}} />}
+              <div>
+                <p className="text-xs font-black" style={{ color:T.terra }}>⚡ {recipe.fasterMethod.label}</p>
+                <p className="text-xs mt-0.5 leading-relaxed" style={{ color:T.terra2 }}>{recipe.fasterMethod.tip}</p>
+              </div>
+            </div>
+          )}
+          <div className="grid grid-cols-3 gap-2 my-4">
+            {[{icon:Clock,l:"時間",v:`${recipe.time}分鐘`},{icon:Star,l:"配對",v:`${pct}%`},{icon:Tag,l:"菜系",v:CUISINES.find(c=>c.id===recipe.cuisine)?.label||"—"}]
+              .map(({icon:IconC,l,v}) => (
+                <div key={l} className="rounded-2xl p-2.5 text-center" style={{ background:recipe.color+"18" }}>
+                  <IconC size={13} className="mx-auto mb-1" style={{color:recipe.color}} />
+                  <p className="text-xs" style={{ color:T.textSoft }}>{l}</p>
+                  <p className="text-sm font-black" style={{ color:T.text }}>{v}</p>
+                </div>
+              ))}
+          </div>
+          {missing.length>0 && (
+            <div className="mb-3 px-3 py-2.5 rounded-2xl flex items-start gap-2" style={{ background:T.peach4, border:`1.5px solid ${T.peach3}` }}>
+              <AlertCircle size={13} style={{color:T.peach,flexShrink:0,marginTop:1}} />
+              <p className="text-xs" style={{ color:T.rose }}><span className="font-black">欠缺：</span>{missing.join("、")}</p>
+            </div>
+          )}
+          {recipe.notes && (
+            <div className="mb-4 px-3 py-2.5 rounded-2xl text-sm" style={{ background:T.honey3, border:`1.5px solid ${T.honey2}` }}>
+              💡 <span style={{ color:T.textMid }}>{recipe.notes}</span>
+            </div>
+          )}
+          <div className="flex gap-2 mb-4 p-1 rounded-2xl" style={{ background:T.cream3 }}>
+            {[["ingredients","食材"],["steps","步驟"]].map(([id,label]) => (
+              <button key={id} onClick={() => setTab(id)}
+                className="flex-1 py-2 rounded-xl text-sm font-black"
+                style={tab===id ? {background:recipe.color,color:"#fff"} : {color:T.textSoft}}>{label}</button>
+            ))}
+          </div>
+          {tab==="ingredients" && (
+            <div>
+              {recipe.needs.map((n,i) => (
+                <div key={i} className="flex items-center gap-3 py-2.5 border-b last:border-0" style={{ borderColor:T.cream3 }}>
+                  <span className="flex-1 text-sm font-semibold" style={{ color:T.text }}>{n}</span>
+                  {pantryNames.includes(n) ? <Check size={14} style={{color:T.sage}} /> : <span className="text-xs font-bold" style={{color:T.peach}}>欠缺</span>}
+                </div>
+              ))}
+              {recipe.optional?.length>0 && (
+                <>
+                  <p className="text-xs font-black uppercase tracking-widest mt-4 mb-2" style={{ color:T.textFaint }}>可選食材</p>
+                  {recipe.optional.map((n,i) => (
+                    <div key={i} className="flex items-center gap-3 py-2 opacity-60">
+                      <span className="flex-1 text-sm" style={{ color:T.textMid }}>{n} <span style={{color:T.textFaint}}>（可選）</span></span>
+                      {pantryNames.includes(n) && <Check size={13} style={{color:T.sage2}} />}
+                    </div>
+                  ))}
+                </>
+              )}
+            </div>
+          )}
+          {tab==="steps" && (
+            <ol className="space-y-3">
+              {recipe.steps.map((step,i) => {
+                const isDone = done.includes(i);
+                return (
+                  <li key={i} className="flex gap-3 cursor-pointer"
+                    onClick={() => setDone(d => d.includes(i)?d.filter(x=>x!==i):[...d,i])}>
+                    <div className="w-7 h-7 rounded-full flex-shrink-0 flex items-center justify-center text-xs font-black mt-0.5"
+                      style={{ background:isDone?recipe.color:recipe.color+"22", color:isDone?"#fff":recipe.color }}>
+                      {isDone ? <Check size={10} /> : i+1}
+                    </div>
+                    <p className="text-sm leading-relaxed" style={{ color:isDone?T.textFaint:T.textMid, textDecoration:isDone?"line-through":"none" }}>{step}</p>
+                  </li>
+                );
+              })}
+            </ol>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── RECIPES TAB ────────────────────────────────────────────────────────────────
+function RecipesTab({ recipes, items, busyToday, syncStatus, lastSync, syncError, onRefresh }) {
+  const [search, setSearch]       = useState("");
+  const [cuisine, setCuisine]     = useState("all");
+  const [favFilter, setFav]       = useState(null);
+  const [matchOnly, setMatch]     = useState(false);
+  const [busyOnly, setBusy]       = useState(busyToday);
+  const [sheetOnly, setSheetOnly] = useState(false);
+  const [viewing, setViewing]     = useState(null);
+  const pantryNames = useMemo(() => items.filter(i=>i.section!=="leftover").map(i=>i.name), [items]);
+  const filtered = useMemo(() => recipes.filter(r => {
+    const m = r.needs.filter(n=>pantryNames.includes(n)).length;
+    const pct = r.needs.length ? Math.round((m/r.needs.length)*100) : 100;
+    if (matchOnly  && pct<100) return false;
+    if (busyOnly   && r.time>20) return false;
+    if (sheetOnly  && !r.fromSheet) return false;
+    if (cuisine!=="all" && r.cuisine!==cuisine) return false;
+    if (favFilter  && !r.favourites?.includes(favFilter)) return false;
+    if (search) { const q=search.toLowerCase(); if (!r.title.toLowerCase().includes(q) && !r.tags?.some(t=>t.toLowerCase().includes(q))) return false; }
+    return true;
+  }).sort((a,b) => {
+    const pa=a.needs.filter(n=>pantryNames.includes(n)).length/Math.max(a.needs.length,1);
+    const pb=b.needs.filter(n=>pantryNames.includes(n)).length/Math.max(b.needs.length,1);
+    return pb-pa;
+  }), [recipes, pantryNames, matchOnly, busyOnly, sheetOnly, cuisine, favFilter, search]);
+  const sheetCount = recipes.filter(r=>r.fromSheet).length;
+  return (
+    <div>
+      {syncStatus==="loading" ? <div className="mb-4"><SheetLoadingCard /></div> : <SyncStatusBar status={syncStatus} lastSync={lastSync} errorMsg={syncError} onRefresh={onRefresh} />}
+      <div className="relative mb-3">
+        <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2" style={{color:T.textFaint}} />
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="搜尋食譜、標籤、家人…"
+          className="w-full pl-8 pr-8 py-2.5 rounded-2xl border-2 text-sm outline-none"
+          style={{ background:T.cream2, borderColor:T.cream3, color:T.text }} />
+        {search && <button onClick={()=>setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2"><X size={12} style={{color:T.textFaint}} /></button>}
+      </div>
+      <div className="flex gap-2 overflow-x-auto pb-2 mb-3 scrollbar-hide">
+        {CUISINES.map(c => {
+          const active = cuisine===c.id;
+          return <button key={c.id} onClick={()=>setCuisine(c.id)}
+            className="flex-shrink-0 flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-black border-2"
+            style={active ? {background:c.color,color:"#fff",borderColor:c.color} : {background:"transparent",color:c.color,borderColor:c.color+"66"}}>
+            {c.emoji}{c.label}
+          </button>;
+        })}
+      </div>
+      <div className="flex flex-wrap gap-1.5 mb-4">
+        {FAMILY.map(m => { const on=favFilter===m.id; return <button key={m.id} onClick={()=>setFav(on?null:m.id)}
+          className="flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-black border-2"
+          style={on ? {background:m.color,color:"#fff",borderColor:m.color} : {background:m.bg,color:m.color,borderColor:m.color+"55"}}>
+          {m.emoji}{m.label}{on?<ToggleRight size={10}/>:<ToggleLeft size={10}/>}
+        </button>; })}
+        <button onClick={()=>setMatch(v=>!v)} className="flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-black border-2"
+          style={matchOnly ? {background:T.sage,color:"#fff",borderColor:T.sage} : {background:T.sage4,color:T.sage,borderColor:T.sage+"55"}}>
+          <Check size={10} />齊料
+        </button>
+        <button onClick={()=>setBusy(v=>!v)} className="flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-black border-2"
+          style={busyOnly ? {background:T.honey,color:"#fff",borderColor:T.honey} : {background:T.honey3,color:T.terra,borderColor:T.honey2}}>
+          <Zap size={10} />忙日
+        </button>
+        {sheetCount>0 && <button onClick={()=>setSheetOnly(v=>!v)} className="flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-black border-2"
+          style={sheetOnly ? {background:T.sky,color:"#fff",borderColor:T.sky} : {background:T.sky3,color:T.sky,borderColor:T.sky+"55"}}>
+          <Wifi size={10} />Sheets ({sheetCount})
+        </button>}
+      </div>
+      <p className="text-xs mb-3" style={{ color:T.textFaint }}>顯示 <span className="font-black" style={{color:T.textMid}}>{filtered.length}</span> / {recipes.length} 個食譜
+        {sheetCount>0 && <span style={{color:T.sky}}> · 📡 {sheetCount} 個來自 Sheets</span>}
+      </p>
+      <div className="grid grid-cols-1 gap-3">
+        {filtered.length===0 ? <div className="text-center py-16"><span className="text-5xl">🌿</span><p className="mt-3 font-black" style={{color:T.textSoft}}>搵唔到食譜</p></div>
+          : filtered.map(r => <RecipeCard key={r.id} recipe={r} pantryNames={pantryNames} busyToday={busyToday} onOpen={setViewing} />)}
+      </div>
+      {viewing && <RecipeViewModal recipe={viewing} pantryNames={pantryNames} onClose={()=>setViewing(null)} />}
+    </div>
+  );
+}
+
+// ── PLAN TAB ──────────────────────────────────────────────────────────────────
+function PlanTab({ recipes, items }) {
+  const dow = getDow();
+  const week = Array.from({length:7},(_,i) => (dow+i)%7);
+  const pantryNames = useMemo(() => items.filter(i=>i.section!=="leftover").map(i=>i.name), [items]);
+  return (
+    <div>
+      <h2 className="font-black text-xl mb-1" style={{ color:T.text, fontFamily:"Georgia,serif" }}>📅 本週餐單</h2>
+      <p className="text-xs mb-4" style={{ color:T.textSoft }}>忙碌日自動推薦快手食譜</p>
+      <div className="space-y-3">
+        {week.map((dayDow,idx) => {
+          const isToday = idx===0; const dayBusy = isBusy(dayDow);
+          const pool = [...recipes].filter(r=>dayBusy?r.time<=20:true).sort((a,b) => {
+            const pa=a.needs.filter(n=>pantryNames.includes(n)).length/Math.max(a.needs.length,1);
+            const pb=b.needs.filter(n=>pantryNames.includes(n)).length/Math.max(b.needs.length,1);
+            return pb-pa;
+          });
+          const pick = pool[idx%Math.max(pool.length,1)];
+          const pct = pick ? Math.round((pick.needs.filter(n=>pantryNames.includes(n)).length/Math.max(pick.needs.length,1))*100) : 0;
+          return (
+            <div key={dayDow} className="rounded-3xl overflow-hidden"
+              style={{ border:`2px solid ${isToday?T.honey:T.cream3}`, boxShadow:isToday?`0 4px 16px ${T.honey}33`:"none" }}>
+              <div className="flex items-center justify-between px-4 py-2.5" style={{ background:dayBusy?T.honey3:T.cream2 }}>
+                <div className="flex items-center gap-2">
+                  {isToday && <span className="text-xs font-black px-2.5 py-0.5 rounded-full text-white" style={{background:T.honey}}>今日</span>}
+                  <span className="font-black" style={{color:T.text}}>週{DAYS_ZH[dayDow]}</span>
+                  {dayBusy && <span className="text-xs font-bold flex items-center gap-0.5" style={{color:T.terra}}><Zap size={10}/>忙碌日</span>}
+                </div>
+                {dayBusy && <span className="text-xs" style={{color:T.textFaint}}>≤20分鐘</span>}
+              </div>
+              {pick && (
+                <div className="px-4 py-3 flex items-center gap-3" style={{ background:T.cream }}>
+                  <span className="text-2xl">{pick.emoji}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-black text-sm truncate" style={{ color:T.text, fontFamily:"Georgia,serif" }}>
+                      {pick.title}{pick.fromSheet && <span className="ml-1 text-xs font-normal" style={{color:T.sky}}>📡</span>}
+                    </p>
+                    <p className="text-xs flex items-center gap-1 mt-0.5" style={{ color:T.textSoft }}>
+                      <Clock size={9}/>{pick.time}分鐘
+                      {pick.favourites?.length>0 && <span>· {pick.favourites.map(fid=>FAMILY.find(f=>f.id===fid)?.emoji).join("")}最愛</span>}
+                    </p>
+                  </div>
+                  <span className="text-xs font-black" style={{ color:pct===100?T.sage:T.honey }}>{pct}%</span>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── AI VISION TAB ─────────────────────────────────────────────────────────────
+function AIVisionTab({ items, setItems, essentials, setEssentials, restockList, setRestockList }) {
+  const [mode, setMode]           = useState("restock");
+  const [imgSrc, setImgSrc]       = useState(null);
+  const [imgB64, setImgB64]       = useState(null);
+  const [imgType, setImgType]     = useState("image/jpeg");
+  const [status, setStatus]       = useState("idle");
+  const [errMsg, setErrMsg]       = useState("");
+  const [result, setResult]       = useState(null);
+  const [confirmed, setConfirmed] = useState([]);
+  const [showEssEdit, setShowEssEdit] = useState(false);
+  const [newEssName, setNewEssName]   = useState("");
+  const [newEssEmoji, setNewEssEmoji] = useState("🥬");
+  const [newEssSec, setNewEssSec]     = useState("fridge");
+  const fileRef = useRef(null);
+  const missingEssentials = useMemo(() => { const inStock=new Set(items.map(i=>i.name.trim())); return essentials.filter(e=>!inStock.has(e.name.trim())); }, [items, essentials]);
+  const sectionColors = { fridge:T.sky, frozen:T.frozen, pantry:T.sage, leftover:T.honey };
+  const sectionBgs    = { fridge:T.sky3, frozen:T.frozen3, pantry:T.sage4, leftover:T.honey3 };
+  const sectionEmojis = { fridge:"🧊", frozen:"❄️", pantry:"🪴", leftover:"🍱" };
+
+  const pickImage = (e) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    setResult(null); setConfirmed([]); setStatus("idle"); setErrMsg("");
+    const reader = new FileReader();
+    reader.onerror = () => { setStatus("error"); setErrMsg("FileReader 讀取失敗"); };
+    reader.onload = (ev) => {
+      const originalDataUrl = ev.target.result;
+      setImgSrc(originalDataUrl);
+      const img = new Image();
+      img.onerror = () => { setImgB64(originalDataUrl.split(",")[1]); setImgType(file.type||"image/jpeg"); };
+      img.onload = () => {
+        try {
+          const MAX=1024; let w=img.naturalWidth||img.width; let h=img.naturalHeight||img.height;
+          if (w>MAX||h>MAX) { if (w>=h) { h=Math.round(h*MAX/w); w=MAX; } else { w=Math.round(w*MAX/h); h=MAX; } }
+          const canvas=document.createElement("canvas"); canvas.width=w; canvas.height=h;
+          canvas.getContext("2d").drawImage(img,0,0,w,h);
+          const compressed=canvas.toDataURL("image/jpeg",0.82);
+          setImgSrc(compressed); setImgB64(compressed.split(",")[1]); setImgType("image/jpeg");
+        } catch(e) { setImgB64(originalDataUrl.split(",")[1]); setImgType(file.type||"image/jpeg"); }
+      };
+      img.src = originalDataUrl;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const scan = async () => {
+    if (!imgB64) return; setStatus("scanning"); setResult(null); setErrMsg("");
+    try { const res=await callVisionAI(imgB64,imgType,mode); setResult(res); setConfirmed(res.items.map((_,i)=>i)); setStatus("done"); }
+    catch(err) { setErrMsg(err.message||"未知錯誤"); setStatus("error"); }
+  };
+
+  const applyItems = () => {
+    if (!result) return;
+    const selected = result.items.filter((_,i) => confirmed.includes(i));
+    if (mode==="restock") {
+      const newItems = selected.map(item => ({ id:uid(), name:item.name, emoji:item.emoji||"🍽️", section:item.section||"fridge", qty:item.qty||1, unit:item.unit||"份", dateAdded:todayStr(), notes:"AI 辨識加入" }));
+      setItems(prev => { const existing=new Set(prev.map(p=>p.name+p.section)); return [...newItems.filter(n=>!existing.has(n.name+n.section)),...prev]; });
+    } else {
+      const names = new Set(selected.map(s=>s.name));
+      setItems(prev => prev.filter(p=>!names.has(p.name)));
+      setRestockList(prev => { const existing=new Set(prev.map(r=>r.name)); return [...prev,...selected.filter(s=>!existing.has(s.name))]; });
+    }
+    setResult(null); setImgSrc(null); setImgB64(null); setStatus("idle"); setConfirmed([]);
+  };
+
+  const toggleConfirm = i => setConfirmed(c => c.includes(i)?c.filter(x=>x!==i):[...c,i]);
+  const removeRestock = name => setRestockList(p => p.filter(r=>r.name!==name));
+  const restockItem = item => {
+    setItems(prev => { const exists=prev.find(p=>p.name===item.name); if (exists) return prev; return [{id:uid(),name:item.name,emoji:item.emoji||"🛒",section:item.section||"fridge",qty:1,unit:"份",dateAdded:todayStr(),notes:"補貨"},...prev]; });
+    removeRestock(item.name);
+  };
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="font-black text-xl" style={{ color:T.text, fontFamily:"Georgia,serif" }}>✨ AI 視覺庫存</h2>
+        <p className="text-xs mt-0.5" style={{ color:T.textSoft }}>拍照即時辨識食材，自動更新庫存</p>
+      </div>
+      {missingEssentials.length>0 && (
+        <div className="rounded-2xl overflow-hidden" style={{ border:`2px solid ${T.alert2}`, background:T.alert3 }}>
+          <div className="flex items-center justify-between px-4 py-2.5" style={{ background:T.alert }}>
+            <div className="flex items-center gap-2"><AlertOctagon size={15} color="#fff" /><p className="font-black text-sm text-white">每日必需品缺貨警報！</p></div>
+            <button onClick={()=>setShowEssEdit(v=>!v)} className="text-xs px-2 py-1 rounded-full font-bold" style={{ background:"#ffffff33", color:"#fff" }}><Settings size={11}/></button>
+          </div>
+          <div className="px-4 py-3 flex flex-wrap gap-2">
+            {missingEssentials.map(e => (
+              <div key={e.name} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full" style={{ background:T.cream, border:`1.5px solid ${T.alert2}` }}>
+                <span className="text-base">{e.emoji}</span>
+                <span className="text-xs font-black" style={{color:T.alert}}>{e.name}</span>
+                <span className="text-xs" style={{color:T.textFaint}}>缺！</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {missingEssentials.length===0 && essentials.length>0 && (
+        <div className="rounded-2xl px-4 py-3 flex items-center justify-between" style={{ background:T.ok3, border:`1.5px solid ${T.sage3}` }}>
+          <div className="flex items-center gap-2"><Check size={14} style={{color:T.ok}}/><p className="text-sm font-black" style={{color:T.ok}}>每日必需品齊全 ✓</p></div>
+          <button onClick={()=>setShowEssEdit(v=>!v)} className="text-xs px-2.5 py-1 rounded-full font-bold flex items-center gap-1" style={{ background:T.sage4, color:T.sage }}><Settings size={10}/>管理</button>
+        </div>
+      )}
+      {showEssEdit && (
+        <div className="rounded-2xl p-4 space-y-3" style={{ background:T.cream2, border:`1.5px solid ${T.cream3}` }}>
+          <p className="font-black text-sm" style={{ color:T.text }}>📋 每日必需品清單</p>
+          <div className="space-y-2">
+            {essentials.map(e => (
+              <div key={e.name} className="flex items-center gap-2 px-3 py-2 rounded-xl" style={{ background:T.cream }}>
+                <span className="text-xl">{e.emoji}</span>
+                <span className="flex-1 text-sm font-semibold" style={{color:T.text}}>{e.name}</span>
+                <span className="text-xs px-2 py-0.5 rounded-full font-bold" style={{ background:sectionBgs[e.section]||T.cream3, color:sectionColors[e.section]||T.textMid }}>{sectionEmojis[e.section]}{e.section}</span>
+                <button onClick={()=>setEssentials(p=>p.filter(x=>x.name!==e.name))} className="w-7 h-7 rounded-full flex items-center justify-center" style={{background:T.alert3}}>
+                  <X size={11} style={{color:T.alert}} />
+                </button>
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-2 pt-1">
+            <input value={newEssEmoji} onChange={e=>setNewEssEmoji(e.target.value)} maxLength={2}
+              className="w-12 text-center text-xl rounded-xl border-2 outline-none" style={{ background:T.cream, borderColor:T.cream3 }} />
+            <input value={newEssName} onChange={e=>setNewEssName(e.target.value)} placeholder="食材名稱…"
+              className="flex-1 px-3 py-2 rounded-xl border-2 text-sm outline-none" style={{ background:T.cream, borderColor:T.cream3, color:T.text }} />
+            <select value={newEssSec} onChange={e=>setNewEssSec(e.target.value)}
+              className="px-2 py-2 rounded-xl border-2 text-xs outline-none" style={{ background:T.cream, borderColor:T.cream3, color:T.text }}>
+              <option value="fridge">雪櫃</option><option value="frozen">冷凍</option><option value="pantry">食品櫃</option>
+            </select>
+            <button onClick={()=>{ if (!newEssName.trim()) return; setEssentials(p=>[...p,{name:newEssName.trim(),emoji:newEssEmoji,section:newEssSec}]); setNewEssName(""); setNewEssEmoji("🥬"); }}
+              className="px-3 py-2 rounded-xl font-black text-white text-sm" style={{background:T.sage}}><Plus size={14}/></button>
+          </div>
+        </div>
+      )}
+      <div className="flex gap-2 p-1 rounded-2xl" style={{ background:T.cream3 }}>
+        {[{id:"restock",label:"進貨辨識",emoji:"🛍️",desc:"上傳採買照片，自動加入庫存"},{id:"usedup",label:"消耗辨識",emoji:"📦",desc:"空包裝照片，自動移至待買清單"}].map(m => (
+          <button key={m.id} onClick={()=>{ setMode(m.id); setResult(null); setImgSrc(null); setImgB64(null); setStatus("idle"); }}
+            className="flex-1 rounded-xl py-2.5 px-3 text-left"
+            style={mode===m.id ? {background:T.cream,boxShadow:"0 2px 8px #3D2B1F18"} : {}}>
+            <p className="text-sm font-black" style={{ color:mode===m.id?T.text:T.textFaint }}>{m.emoji} {m.label}</p>
+            <p className="text-xs mt-0.5" style={{ color:T.textFaint }}>{m.desc}</p>
+          </button>
+        ))}
+      </div>
+      <div onClick={()=>fileRef.current?.click()}
+        className="rounded-3xl border-2 border-dashed flex flex-col items-center justify-center cursor-pointer active:scale-[0.98]"
+        style={{ minHeight:imgSrc?"auto":180, borderColor:mode==="restock"?T.sage:T.honey, background:mode==="restock"?T.sage4:T.honey3 }}>
+        {imgSrc ? (
+          <div className="w-full relative">
+            <img src={imgSrc} alt="upload" className="w-full rounded-3xl object-cover" style={{ maxHeight:260 }} />
+            <div className="absolute inset-0 rounded-3xl flex items-center justify-center" style={{ background:"#3D2B1F22" }}>
+              <p className="text-white font-black text-sm drop-shadow">換張照片</p>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center gap-3 py-10 px-6">
+            <div className="w-16 h-16 rounded-2xl flex items-center justify-center text-4xl" style={{ background:mode==="restock"?T.sage3:T.honey2 }}>
+              {mode==="restock"?"🛍️":"📦"}
+            </div>
+            <div className="text-center">
+              <p className="font-black text-base" style={{ color:mode==="restock"?T.sage:T.terra, fontFamily:"Georgia,serif" }}>
+                {mode==="restock"?"上傳採買照片":"上傳空包裝照片"}
+              </p>
+              <p className="text-xs mt-1" style={{ color:T.textSoft }}>
+                {mode==="restock"?"袋裝食材、超市收據、流理台":"空瓶、空盒、空格冰箱"}
+              </p>
+            </div>
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full" style={{ background:mode==="restock"?T.sage:T.honey }}>
+              <Camera size={13} color="#fff" /><span className="text-xs font-black text-white">選擇照片</span>
+            </div>
+          </div>
+        )}
+      </div>
+      <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={pickImage} />
+      {imgSrc && status!=="scanning" && status!=="done" && (
+        <button onClick={scan} className="w-full py-4 rounded-2xl font-black text-white flex items-center justify-center gap-2 active:scale-95"
+          style={{ background:`linear-gradient(135deg,${mode==="restock"?T.sage:T.honey},${mode==="restock"?T.sage2:T.honey2})` }}>
+          <ScanLine size={18}/>{mode==="restock"?"開始辨識食材":"辨識消耗食材"}
+        </button>
+      )}
+      {status==="scanning" && (
+        <div className="rounded-2xl px-4 py-5 flex items-center gap-4" style={{ background:T.honey3, border:`2px dashed ${T.honey2}` }}>
+          <span className="text-4xl" style={{ animation:"wobble 1s ease-in-out infinite" }}>🔍</span>
+          <div><p className="font-black" style={{ color:T.terra, fontFamily:"Georgia,serif" }}>AI 正在分析照片…</p><p className="text-xs mt-0.5" style={{color:T.terra2}}>辨識食材中，請稍候</p></div>
+        </div>
+      )}
+      {status==="error" && (
+        <div className="rounded-2xl px-4 py-4 space-y-1.5" style={{ background:T.alert3, border:`1.5px solid ${T.alert2}` }}>
+          <div className="flex items-center gap-2"><AlertCircle size={15} style={{color:T.alert}}/><p className="text-sm font-black" style={{color:T.alert}}>辨識失敗</p></div>
+          {errMsg && <p className="text-xs px-1 leading-relaxed" style={{ color:T.rose, fontFamily:"monospace" }}>{errMsg}</p>}
+          <div className="flex items-center gap-2 pt-1">
+            <p className="text-xs flex-1" style={{color:T.textSoft}}>請重試或換張照片</p>
+            <button onClick={scan} className="text-xs px-3 py-1.5 rounded-full font-black text-white flex items-center gap-1 active:scale-95"
+              style={{ background:T.terra }}>
+              <RefreshCw size={10}/>重試
+            </button>
+            <button onClick={()=>{ setStatus("idle"); setErrMsg(""); setImgSrc(null); setImgB64(null); }}
+              className="text-xs px-3 py-1.5 rounded-full font-bold active:scale-95"
+              style={{ background:T.cream3, color:T.textMid }}>換圖</button>
+          </div>
+        </div>
+      )}
+      {status==="done" && result && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="font-black text-base" style={{ color:T.text, fontFamily:"Georgia,serif" }}>{mode==="restock"?"🎉 辨識結果":"📋 消耗清單"}</p>
+              <p className="text-xs" style={{color:T.textSoft}}>{result.summary} · 勾選要加入的項目</p>
+            </div>
+            <div className="flex gap-1">
+              <button onClick={()=>setConfirmed(result.items.map((_,i)=>i))} className="text-xs px-2 py-1 rounded-full font-bold" style={{ background:T.sage4, color:T.sage }}>全選</button>
+              <button onClick={()=>setConfirmed([])} className="text-xs px-2 py-1 rounded-full font-bold" style={{ background:T.cream3, color:T.textMid }}>取消</button>
+              <button onClick={()=>{ setResult(null); setImgSrc(null); setImgB64(null); setStatus("idle"); setConfirmed([]); }}
+                className="text-xs px-2 py-1 rounded-full font-bold flex items-center gap-1" style={{ background:T.peach3, color:T.rose }}>
+                <RefreshCw size={10}/>重掃
+              </button>
+            </div>
+          </div>
+          <div className="space-y-2">
+            {result.items.map((item,i) => {
+              const isOn = confirmed.includes(i);
+              const secColor = sectionColors[item.section]||T.textMid;
+              const secBg    = sectionBgs[item.section]||T.cream3;
+              return (
+                <div key={i} onClick={()=>toggleConfirm(i)}
+                  className="flex items-center gap-3 px-3.5 py-3 rounded-2xl cursor-pointer active:scale-[0.98]"
+                  style={{ background:isOn?(mode==="restock"?T.sage4:T.honey3):T.cream2, border:`2px solid ${isOn?(mode==="restock"?T.sage:T.honey):T.cream3}` }}>
+                  <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-xl"
+                    style={{ background:isOn?(mode==="restock"?T.sage:T.honey):T.cream3 }}>
+                    {isOn ? <Check size={14} color="#fff" /> : <span>{item.emoji}</span>}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-black" style={{color:T.text}}>{item.emoji} {item.name}</span>
+                      {item.nameEn && <span className="text-xs" style={{color:T.textFaint}}>{item.nameEn}</span>}
+                    </div>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className="text-xs px-2 py-0.5 rounded-full font-bold" style={{ background:secBg, color:secColor }}>{sectionEmojis[item.section]} {item.section}</span>
+                      {item.confidence==="high" && <span className="text-xs font-bold" style={{color:T.ok}}>✓ 高信心</span>}
+                      {item.confidence==="low"  && <span className="text-xs font-bold" style={{color:T.warn}}>? 低信心</span>}
+                      {mode==="restock" && item.qty && <span className="text-xs" style={{color:T.textFaint}}>{item.qty}{item.unit}</span>}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {confirmed.length>0 && (
+            <button onClick={applyItems} className="w-full py-4 rounded-2xl font-black text-white flex items-center justify-center gap-2 active:scale-95"
+              style={{ background:`linear-gradient(135deg,${mode==="restock"?T.sage:T.terra},${mode==="restock"?T.sage2:T.terra2})` }}>
+              {mode==="restock" ? <><Archive size={17}/>加入 {confirmed.length} 件至庫存</> : <><ShoppingCart size={17}/>移至待買清單 ({confirmed.length} 件)</>}
+            </button>
+          )}
+        </div>
+      )}
+      {restockList.length>0 && (
+        <div className="rounded-2xl overflow-hidden" style={{ border:`2px solid ${T.honey2}` }}>
+          <div className="px-4 py-2.5 flex items-center gap-2" style={{ background:T.honey3 }}>
+            <ShoppingCart size={14} style={{color:T.terra}}/><p className="font-black text-sm" style={{color:T.terra}}>待買清單</p>
+            <span className="ml-auto text-xs px-2 py-0.5 rounded-full font-black text-white" style={{background:T.honey}}>{restockList.length}</span>
+          </div>
+          <div className="divide-y" style={{ background:T.cream }}>
+            {restockList.map(item => (
+              <div key={item.name} className="flex items-center gap-3 px-4 py-3">
+                <span className="text-xl">{item.emoji}</span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-bold" style={{color:T.text}}>{item.name}</p>
+                  <p className="text-xs" style={{color:T.textFaint}}>{sectionEmojis[item.section]} {item.section}</p>
+                </div>
+                <button onClick={()=>restockItem(item)} className="text-xs px-2.5 py-1.5 rounded-xl font-black text-white" style={{background:T.sage}}>已買</button>
+                <button onClick={()=>removeRestock(item.name)} className="w-7 h-7 rounded-full flex items-center justify-center" style={{background:T.cream3}}>
+                  <X size={11} style={{color:T.textSoft}}/>
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── MAIN APP ──────────────────────────────────────────────────────────────────
+const MAIN_TABS = [
+  { id:"storage", label:"食物追蹤", icon:Package  },
+  { id:"recipes", label:"食譜",     icon:BookOpen },
+  { id:"plan",    label:"餐單",     icon:Calendar },
+  { id:"ai",      label:"AI 視覺",  icon:Sparkles },
+];
+
+function App() {
+  const dow = getDow(); const busyToday = isBusy(dow);
+  const [tab, setTab]               = useState("storage");
+  const [items, setItems]           = useState(INIT_ITEMS);
+  const [essentials, setEssentials] = useState(DEFAULT_ESSENTIALS);
+  const [restockList, setRestockList] = useState([]);
+  const { sheetRecipes, status:syncStatus, lastSync, errorMsg:syncError, refresh } = useSheetRecipes();
+  const allRecipes = useMemo(() => {
+    const sheetTitles = new Set(sheetRecipes.map(r => r.title.trim().toLowerCase()));
+    return [...sheetRecipes, ...LOCAL_RECIPES.filter(r => !sheetTitles.has(r.title.trim().toLowerCase()))];
+  }, [sheetRecipes]);
+  const alertCount = useMemo(() => items.filter(i => { const s=SECTIONS.find(x=>x.id===i.section); return s&&daysDiff(i.dateAdded)>=s.alertDays; }).length, [items]);
+  const essentialsMissing = useMemo(() => { const inStock=new Set(items.map(i=>i.name.trim())); return essentials.filter(e=>!inStock.has(e.name.trim())).length; }, [items, essentials]);
+
+  return (
+    <div style={{ minHeight:"100vh", background:T.cream, fontFamily:"'Georgia','serif'" }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Lora:wght@400;600;700&display=swap');
+      `}</style>
+      <div className="max-w-lg mx-auto">
+        {/* HEADER */}
+        <header className="sticky top-0 z-40 safe-top" style={{ background:T.cream+"f0", backdropFilter:"blur(20px)", borderBottom:`1.5px solid ${T.cream3}` }}>
+          <div className="px-4 pt-4 pb-2">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl flex items-center justify-center shadow-sm"
+                  style={{ background:`linear-gradient(135deg,${T.sage},${T.sage2})` }}>
+                  <ChefHat size={18} color="#fff" />
+                </div>
+                <div>
+                  <h1 className="font-black text-lg leading-none" style={{ color:T.text, fontFamily:"Georgia,serif" }}>
+                    廚房魔法 <span className="text-sm font-normal italic" style={{color:T.textSoft}}>Kitchen Magic</span>
+                  </h1>
+                  <p className="text-xs mt-0.5" style={{ color:T.textFaint }}>
+                    {busyToday ? `⚡ 忙碌日（週${DAYS_ZH[dow]}）` : `${items.length} 項食物 · ${allRecipes.length} 個食譜`}
+                    {syncStatus==="loading" && <span style={{color:T.honey}}> · 📡 同步中…</span>}
+                    {syncStatus==="success" && sheetRecipes.length>0 && <span style={{color:T.sky}}> · ✅ 已同步</span>}
+                    {syncStatus==="error" && <span style={{color:T.alert}}> · ⚠️ 離線</span>}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <HeaderRefreshButton status={syncStatus} onRefresh={refresh} />
+                {alertCount>0 && (
+                  <button onClick={()=>setTab("storage")} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full"
+                    style={{ background:T.alert3, border:`1.5px solid ${T.alert2}` }}>
+                    <Bell size={13} style={{color:T.alert}}/><span className="text-xs font-black" style={{color:T.alert}}>{alertCount}</span>
+                  </button>
+                )}
+              </div>
+            </div>
+            {/* Tabs */}
+            <div className="flex gap-1 p-1 rounded-2xl" style={{ background:T.cream3 }}>
+              {MAIN_TABS.map(({id,label,icon:TabIcon}) => {
+                const active = tab===id;
+                const hasAlert = id==="storage" && alertCount>0 && !active;
+                return (
+                  <button key={id} onClick={()=>setTab(id)}
+                    className="flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-xs font-black relative"
+                    style={active ? {background:T.cream,color:T.sage,boxShadow:"0 2px 8px #3D2B1F18"} : {color:T.textFaint}}>
+                    <TabIcon size={13}/>{label}
+                    {hasAlert && <span className="absolute top-1 right-1 w-2 h-2 rounded-full" style={{background:T.alert}} />}
+                    {id==="ai" && essentialsMissing>0 && !active && <span className="absolute top-1 right-1 w-2 h-2 rounded-full" style={{background:T.alert}} />}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </header>
+        {/* CONTENT */}
+        <main className="px-4 pt-4 pb-28 safe-bottom">
+          <div className="fade-up" key={tab}>
+            {tab==="storage" && <StorageTab items={items} setItems={setItems} />}
+            {tab==="recipes" && <RecipesTab recipes={allRecipes} items={items} busyToday={busyToday} syncStatus={syncStatus} lastSync={lastSync} syncError={syncError} onRefresh={refresh} />}
+            {tab==="plan"    && <PlanTab recipes={allRecipes} items={items} />}
+            {tab==="ai"      && <AIVisionTab items={items} setItems={setItems} essentials={essentials} setEssentials={setEssentials} restockList={restockList} setRestockList={setRestockList} />}
+          </div>
+        </main>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
