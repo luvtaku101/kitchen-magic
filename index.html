@@ -360,10 +360,16 @@ function parseCSVtoRecipes(text) {
           .split(/\|/)
           .map(line => {
             let s = line.trim();
-            s = s.replace(/^[\*\-\•\#\d]+[\.\)。]?\s*/, "");
+            // 移除 * • - 開頭符號（但保留 - 後面的內容）
+            s = s.replace(/^[\*\•]+\s*/, "");
+            // 移除縮排空格
+            s = s.replace(/^\s{2,}[\*\-\•]?\s*/, "");
+            // 移除 [1] [2] 等引用標記
             s = s.replace(/\s*\[[\d,\s]+\]/g, "");
-            if (/^[\u4e00-\u9fff\w\s]+[：:]\s*$/.test(s)) return null;
-            if (!s || s.length < 2) return null;
+            // 移除純無意義行
+            if (/^(as above|see above|同上|如上|tbd|n\/a)$/i.test(s)) return null;
+            // 空行過濾
+            if (!s || s.length < 1) return null;
             return s;
           })
           .filter(Boolean)
@@ -994,38 +1000,45 @@ function RecipeViewModal({ recipe, pantryNames, onClose }) {
               {recipe.ingredientsFull?.length > 0 ? (
                 <div className="space-y-1.5">
                   {recipe.ingredientsFull.map((line, i) => {
-                    // 判斷是否為分類標題（結尾有冒號，或開頭係「醃料」「醬汁」等）
-                    const isHeader = /[：:]$/.test(line) || /^(醃料|醬汁|調味料|液體|花生餡|配菜|seasonings?)/.test(line);
-                    // 嘗試分割「食材名 : 分量」
-                    const colonMatch = line.match(/^(.+?)[：:]\s*(.+)$/);
-                    const namePart = colonMatch ? colonMatch[1].trim() : line;
-                    const qtyPart  = colonMatch ? colonMatch[2].trim() : null;
-                    // 判斷庫存配對（對比 needs）
-                    const inStock = recipe.needs.some(n => namePart.includes(n) || n.includes(namePart.slice(0,2)));
+                    // 標題行判斷：結尾有冒號且內容很短（純分類詞）
+                    const isHeader =
+                      /[：:]\s*$/.test(line) ||
+                      /^(醃料|醬汁|調味料|液體|花生餡|配菜|材料|seasonings?|marinate|sauce|others?)\s*$/i.test(line);
 
-                    if (isHeader && !colonMatch) {
+                    // 清理行首的 - 號（顯示前）
+                    const displayLine = line.replace(/^-\s*/, "");
+
+                    // 嘗試分割「食材名：分量」或「食材名 數量單位」
+                    const colonMatch = !isHeader && displayLine.match(/^(.+?)[：:]\s*(.+)$/);
+                    const namePart = colonMatch ? colonMatch[1].trim() : displayLine;
+                    const qtyPart  = colonMatch ? colonMatch[2].trim() : null;
+
+                    // 庫存配對（對比 needs）
+                    const inStock = recipe.needs.some(n =>
+                      n.length >= 2 && (namePart.includes(n) || n.includes(namePart.slice(0,2)))
+                    );
+
+                    if (isHeader) {
                       return (
-                        <p key={i} className="text-xs font-black uppercase tracking-widest pt-3 pb-1 first:pt-0"
-                          style={{ color:T.textFaint, borderBottom:`1px solid ${T.cream3}` }}>{line}</p>
+                        <p key={i} className="text-xs font-black pt-3 pb-1 first:pt-0"
+                          style={{ color:T.textSoft, borderBottom:`1px solid ${T.cream3}` }}>
+                          {displayLine.replace(/[：:]\s*$/, "")}
+                        </p>
                       );
                     }
                     return (
                       <div key={i} className="flex items-start gap-3 px-3 py-2.5 rounded-xl"
                         style={{ background: inStock ? T.sage4 : T.cream2 }}>
-                        {/* 庫存指示點 */}
                         <div className="w-2 h-2 rounded-full flex-shrink-0 mt-1.5"
                           style={{ background: inStock ? T.sage : T.cream3 }} />
                         <div className="flex-1 min-w-0">
-                          <span className="text-sm font-bold" style={{ color: T.text }}>{namePart}</span>
-                          {qtyPart && (
-                            <span className="ml-2 text-sm" style={{ color: T.textSoft }}>{qtyPart}</span>
-                          )}
+                          <span className="text-sm font-bold" style={{ color:T.text }}>{namePart}</span>
+                          {qtyPart && <span className="ml-2 text-sm" style={{ color:T.textSoft }}>{qtyPart}</span>}
                         </div>
                         {inStock && <Check size={13} style={{ color:T.sage, flexShrink:0, marginTop:2 }} />}
                       </div>
                     );
                   })}
-                  {/* 庫存配對摘要 */}
                   <div className="mt-3 flex items-center gap-2 px-3 py-2 rounded-xl" style={{ background:T.cream3 }}>
                     <div className="w-2 h-2 rounded-full" style={{ background:T.sage }} />
                     <p className="text-xs" style={{ color:T.textSoft }}>
@@ -1036,14 +1049,28 @@ function RecipeViewModal({ recipe, pantryNames, onClose }) {
                 </div>
               ) : recipe.needs.length > 0 ? (
                 /* fallback：無詳細食材時顯示 needs */
-                recipe.needs.map((n,i) => (
-                  <div key={i} className="flex items-center gap-3 py-2.5 border-b last:border-0" style={{ borderColor:T.cream3 }}>
-                    <span className="flex-1 text-sm font-semibold" style={{ color:T.text }}>{n}</span>
-                    {pantryNames.includes(n) ? <Check size={14} style={{color:T.sage}} /> : <span className="text-xs font-bold" style={{color:T.peach}}>欠缺</span>}
-                  </div>
-                ))
+                <div className="space-y-1">
+                  {recipe.needs.map((n,i) => (
+                    <div key={i} className="flex items-center gap-3 px-3 py-2.5 rounded-xl"
+                      style={{ background: pantryNames.includes(n) ? T.sage4 : T.cream2 }}>
+                      <div className="w-2 h-2 rounded-full flex-shrink-0"
+                        style={{ background: pantryNames.includes(n) ? T.sage : T.cream3 }} />
+                      <span className="flex-1 text-sm font-semibold" style={{ color:T.text }}>{n}</span>
+                      {pantryNames.includes(n)
+                        ? <Check size={14} style={{color:T.sage}} />
+                        : <span className="text-xs font-bold" style={{color:T.peach}}>欠缺</span>}
+                    </div>
+                  ))}
+                  <p className="text-xs mt-3 px-1" style={{ color:T.textFaint }}>
+                    💡 在 Google Sheets 的 ingredients 欄加入詳細分量，即可在此顯示
+                  </p>
+                </div>
               ) : (
-                <p className="text-sm text-center py-4" style={{ color:T.textFaint }}>食材資料從 Sheets 讀取中…</p>
+                <div className="text-center py-8">
+                  <span className="text-4xl">🥬</span>
+                  <p className="mt-3 text-sm font-black" style={{ color:T.textSoft }}>未有食材資料</p>
+                  <p className="text-xs mt-1" style={{ color:T.textFaint }}>請在 Google Sheets 的 ingredients 欄填寫食材</p>
+                </div>
               )}
 
               {recipe.optional?.length>0 && (
