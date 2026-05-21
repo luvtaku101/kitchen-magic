@@ -298,17 +298,17 @@ function parseCSVtoRecipes(text) {
   };
 
   const COL = {
-    name:           colIdx(["recipename","名稱","食譜名","title","標題"]),
-    mainIngredients:colIdx(["mainingredients","主要食材"]),
-    ingredients:    colIdx(["ingredients","食材","材料","ingredient"]),
-    tags:           colIdx(["標籤","分類","tag","tags","type","類型"]),
-    time:           colIdx(["timings","時間","烹飪時間","分鐘","minutes","time","min"]),
-    emoji:          colIdx(["emoji","表情","icon"]),
-    notes:          colIdx(["備注","備註","notes","note","tips","提示"]),
-    steps:          colIdx(["cookingsteps","步驟","做法","steps","instructions"]),
-    cuisine:        colIdx(["whatkindofcuisine","菜系","cuisine","style"]),
-    favourites:     colIdx(["who'sfavourite","who","喜歡","最愛","favourite","favorites","family"]),
-    video:          colIdx(["videolinkreference","video","影片","link"]),
+    name:           1,  // recipename
+    mainIngredients:4,  // mainingredients
+    ingredients:    5,  // ingredients
+    tags:           -1, // no tags column
+    time:           7,  // timings
+    emoji:          -1, // no emoji column
+    notes:          -1, // no notes column
+    steps:          6,  // cookingsteps
+    cuisine:        3,  // whatkindofcuisine
+    favourites:     2,  // who'sfavourite
+    video:          8,  // videolinkreference
   };
 
   const getCol = (cols, idx) => idx !== -1 ? (cols[idx] || "").replace(/^"|"$/g, "").trim() : "";
