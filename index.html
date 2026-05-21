@@ -560,7 +560,7 @@ function AddItemModal({ defaultSection, onAdd, onClose }) {
   const pickQuick = ({n,e}) => { setName(n); setEmoji(e); setEmojiTab(false); };
   const submit = () => { if (!name.trim()) return; onAdd({id:uid(),name:name.trim(),emoji,section,qty:Number(qty),unit,dateAdded:dateStr,notes}); onClose(); };
   return (
-    <div onMouseDown={e => e.target===e.currentTarget && onClose()} style={{ position:"fixed", inset:0, zIndex:9999, background:"#3D2B1F88", display:"flex", alignItems:"flex-end", justifyContent:"center" }}>
+    <div onMouseDown={e => e.target===e.currentTarget && onClose()} style={{ position:"fixed", top:0, left:0, right:0, bottom:0, zIndex:9999, background:"#3D2B1F88", display:"flex", alignItems:"flex-end", justifyContent:"center" }}>
 
       <div style={{ background:T.cream, position:"relative", zIndex:10000, width:"100%", maxWidth:"640px", borderRadius:"24px 24px 0 0", maxHeight:"92vh", overflowY:"auto", display:"flex", flexDirection:"column", boxShadow:"0 -8px 40px #3D2B1F33" }}>
         <div className="flex-shrink-0 px-5 pt-5 pb-3 flex items-center justify-between" style={{ borderBottom:`1.5px solid ${T.cream3}` }}>
@@ -885,7 +885,7 @@ function RecipeViewModal({ recipe, pantryNames, onClose }) {
   const missing = recipe.needs.filter(n => !pantryNames.includes(n));
   useEffect(() => { document.body.style.overflow = "hidden"; return () => { document.body.style.overflow = ""; }; }, []);
   return (
-    <div onMouseDown={e => e.target===e.currentTarget && onClose()} style={{ position:"fixed", inset:0, zIndex:9999, background:"#3D2B1F99", display:"flex", alignItems:"flex-end", justifyContent:"center" }}>
+    <div onMouseDown={e => e.target===e.currentTarget && onClose()} style={{ position:"fixed", top:0, left:0, right:0, bottom:0, zIndex:9999, background:"#3D2B1F99", display:"flex", alignItems:"flex-end", justifyContent:"center" }}>
 
       <div style={{ background:T.cream, position:"relative", zIndex:10000, width:"100%", maxWidth:"640px", borderRadius:"24px 24px 0 0", maxHeight:"92vh", overflowY:"auto", boxShadow:"0 -8px 40px #3D2B1F33" }}>
         <div className="relative h-44 flex items-center justify-center rounded-t-3xl"
