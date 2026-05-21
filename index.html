@@ -296,16 +296,17 @@ function parseCSVtoRecipes(text) {
   };
 
   const COL = {
-    name:        colIdx(["recipename","名稱","食譜名","recipe","name","title","標題"]),
-    ingredients: colIdx(["ingredients","食材","材料","ingredient"]),
-    tags:        colIdx(["標籤","分類","tag","tags","type","類型"]),
-    time:        colIdx(["timings","時間","烹飪時間","分鐘","minutes","time","min"]),
-    emoji:       colIdx(["emoji","表情","icon"]),
-    notes:       colIdx(["備注","備註","notes","note","tips","提示"]),
-    steps:       colIdx(["cookingsteps","步驟","做法","steps","instructions"]),
-    cuisine:     colIdx(["whatkindofcuisine","菜系","cuisine","style"]),
-    favourites:  colIdx(["who","喜歡","最愛","favourite","favorites","family"]),
-    video:       colIdx(["video","影片","link"]),
+    name:           colIdx(["recipename","名稱","食譜名","recipe","name","title","標題"]),
+    mainIngredients:colIdx(["mainingredients","main ingredients","主要食材","mainings"]),
+    ingredients:    colIdx(["ingredients","食材","材料","ingredient"]),
+    tags:           colIdx(["標籤","分類","tag","tags","type","類型"]),
+    time:           colIdx(["timings","時間","烹飪時間","分鐘","minutes","time","min"]),
+    emoji:          colIdx(["emoji","表情","icon"]),
+    notes:          colIdx(["備注","備註","notes","note","tips","提示"]),
+    steps:          colIdx(["cookingsteps","步驟","做法","steps","instructions"]),
+    cuisine:        colIdx(["whatkindofcuisine","菜系","cuisine","style"]),
+    favourites:     colIdx(["who","喜歡","最愛","favourite","favorites","family"]),
+    video:          colIdx(["video","影片","link"]),
   };
 
   const getCol = (cols, idx) => idx !== -1 ? (cols[idx] || "").replace(/^"|"$/g, "").trim() : "";
@@ -326,6 +327,7 @@ function parseCSVtoRecipes(text) {
     const name = getCol(cols, COL.name);
     if (!name) return;
 
+    const rawMainIng = getCol(cols, COL.mainIngredients);
     const rawIng     = getCol(cols, COL.ingredients);
     const rawTags    = getCol(cols, COL.tags);
     const rawTime    = getCol(cols, COL.time);
@@ -333,8 +335,11 @@ function parseCSVtoRecipes(text) {
     const rawSteps   = getCol(cols, COL.steps);
     const rawFav     = getCol(cols, COL.favourites).toLowerCase();
 
-    // ✅ 使用新的 cleanIngredients 解析複雜格式
-    const ingredients = cleanIngredients(rawIng);
+    // ✅ Main Ingredients 欄：乾淨食材名，直接按換行分割
+    // Fallback 到舊 cleanIngredients 如果 mainIngredients 欄沒有資料
+    const ingredients = rawMainIng
+      ? rawMainIng.split(/\n/).map(s => s.trim()).filter(s => s.length >= 1)
+      : cleanIngredients(rawIng);
 
     const tags = rawTags ? rawTags.split(/[、,，\n]/).map(s => s.trim()).filter(Boolean) : [];
     const time = parseInt(rawTime) || 30;
