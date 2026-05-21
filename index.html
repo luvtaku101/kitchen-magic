@@ -358,7 +358,7 @@ function parseCSVtoRecipes(text) {
     const time = parseInt(rawTime) || 30;
     const emoji = getCol(cols, COL.emoji) || "🍽️";
     const notes = getCol(cols, COL.notes);
-    const steps = rawSteps ? rawSteps.split(/[。\n]/).map(s => s.trim()).filter(Boolean) : [];
+    const steps = rawSteps ? rawSteps.split(/[|\n。]/).map(s => s.trim()).filter(Boolean) : [];
     const video = getCol(cols, COL.video);
 
     const favourites = FAMILY.filter(f =>
