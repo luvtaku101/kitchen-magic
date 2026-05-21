@@ -287,6 +287,8 @@ function parseCSVtoRecipes(text) {
   };
 
   const headers = parseLine(lines[0]).map(h => h.toLowerCase().replace(/[\s"']/g, "").trim());
+  // Debug: log headers to console
+  console.log("KM headers:", headers);
   const colIdx = (candidates) => {
     for (const c of candidates) {
       const i = headers.findIndex(h => h.includes(c));
