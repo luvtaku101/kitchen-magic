@@ -286,7 +286,7 @@ function parseCSVtoRecipes(text) {
     cols.push(cur.trim()); return cols;
   };
 
-  const headers = parseLine(lines[0]).map(h => h.toLowerCase().replace(/[\s"]/g, ""));
+  const headers = parseLine(lines[0]).map(h => h.toLowerCase().replace(/[\s"']/g, "").trim());
   const colIdx = (candidates) => {
     for (const c of candidates) {
       const i = headers.findIndex(h => h.includes(c));
@@ -296,8 +296,8 @@ function parseCSVtoRecipes(text) {
   };
 
   const COL = {
-    name:           colIdx(["recipename","名稱","食譜名","recipe","name","title","標題"]),
-    mainIngredients:colIdx(["mainingredients","main ingredients","主要食材","mainings"]),
+    name:           colIdx(["recipename","名稱","食譜名","title","標題"]),
+    mainIngredients:colIdx(["mainingredients","主要食材"]),
     ingredients:    colIdx(["ingredients","食材","材料","ingredient"]),
     tags:           colIdx(["標籤","分類","tag","tags","type","類型"]),
     time:           colIdx(["timings","時間","烹飪時間","分鐘","minutes","time","min"]),
@@ -305,8 +305,8 @@ function parseCSVtoRecipes(text) {
     notes:          colIdx(["備注","備註","notes","note","tips","提示"]),
     steps:          colIdx(["cookingsteps","步驟","做法","steps","instructions"]),
     cuisine:        colIdx(["whatkindofcuisine","菜系","cuisine","style"]),
-    favourites:     colIdx(["who","喜歡","最愛","favourite","favorites","family"]),
-    video:          colIdx(["video","影片","link"]),
+    favourites:     colIdx(["who'sfavourite","who","喜歡","最愛","favourite","favorites","family"]),
+    video:          colIdx(["videolinkreference","video","影片","link"]),
   };
 
   const getCol = (cols, idx) => idx !== -1 ? (cols[idx] || "").replace(/^"|"$/g, "").trim() : "";
