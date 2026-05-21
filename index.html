@@ -354,6 +354,21 @@ function parseCSVtoRecipes(text) {
       ? rawMainIng.split(/[|\n]/).map(s => s.trim()).filter(s => s.length >= 1)
       : cleanIngredients(rawIng);
 
+    // ✅ ingredientsFull：清洗 Col 5 為顯示用條目，保留分量
+    const ingredientsFull = rawIng
+      ? rawIng
+          .split(/\|/)
+          .map(line => {
+            let s = line.trim();
+            s = s.replace(/^[\*\-\•\#\d]+[\.\)。]?\s*/, "");
+            s = s.replace(/\s*\[[\d,\s]+\]/g, "");
+            if (/^[\u4e00-\u9fff\w\s]+[：:]\s*$/.test(s)) return null;
+            if (!s || s.length < 2) return null;
+            return s;
+          })
+          .filter(Boolean)
+      : [];
+
     const tags = rawTags ? rawTags.split(/[、,，\n]/).map(s => s.trim()).filter(Boolean) : [];
     const time = parseInt(rawTime) || 30;
     const emoji = getCol(cols, COL.emoji) || "🍽️";
@@ -378,6 +393,7 @@ function parseCSVtoRecipes(text) {
       color,
       tags,
       needs: ingredients,
+      ingredientsFull,
       optional: [],
       steps,
       notes,
@@ -974,15 +990,62 @@ function RecipeViewModal({ recipe, pantryNames, onClose }) {
           </div>
           {tab==="ingredients" && (
             <div>
-              {recipe.needs.length === 0 && (
+              {/* ── 詳細食材（含分量）：優先用 ingredientsFull ── */}
+              {recipe.ingredientsFull?.length > 0 ? (
+                <div className="space-y-1.5">
+                  {recipe.ingredientsFull.map((line, i) => {
+                    // 判斷是否為分類標題（結尾有冒號，或開頭係「醃料」「醬汁」等）
+                    const isHeader = /[：:]$/.test(line) || /^(醃料|醬汁|調味料|液體|花生餡|配菜|seasonings?)/.test(line);
+                    // 嘗試分割「食材名 : 分量」
+                    const colonMatch = line.match(/^(.+?)[：:]\s*(.+)$/);
+                    const namePart = colonMatch ? colonMatch[1].trim() : line;
+                    const qtyPart  = colonMatch ? colonMatch[2].trim() : null;
+                    // 判斷庫存配對（對比 needs）
+                    const inStock = recipe.needs.some(n => namePart.includes(n) || n.includes(namePart.slice(0,2)));
+
+                    if (isHeader && !colonMatch) {
+                      return (
+                        <p key={i} className="text-xs font-black uppercase tracking-widest pt-3 pb-1 first:pt-0"
+                          style={{ color:T.textFaint, borderBottom:`1px solid ${T.cream3}` }}>{line}</p>
+                      );
+                    }
+                    return (
+                      <div key={i} className="flex items-start gap-3 px-3 py-2.5 rounded-xl"
+                        style={{ background: inStock ? T.sage4 : T.cream2 }}>
+                        {/* 庫存指示點 */}
+                        <div className="w-2 h-2 rounded-full flex-shrink-0 mt-1.5"
+                          style={{ background: inStock ? T.sage : T.cream3 }} />
+                        <div className="flex-1 min-w-0">
+                          <span className="text-sm font-bold" style={{ color: T.text }}>{namePart}</span>
+                          {qtyPart && (
+                            <span className="ml-2 text-sm" style={{ color: T.textSoft }}>{qtyPart}</span>
+                          )}
+                        </div>
+                        {inStock && <Check size={13} style={{ color:T.sage, flexShrink:0, marginTop:2 }} />}
+                      </div>
+                    );
+                  })}
+                  {/* 庫存配對摘要 */}
+                  <div className="mt-3 flex items-center gap-2 px-3 py-2 rounded-xl" style={{ background:T.cream3 }}>
+                    <div className="w-2 h-2 rounded-full" style={{ background:T.sage }} />
+                    <p className="text-xs" style={{ color:T.textSoft }}>
+                      深綠色 = 已有庫存 ·
+                      <span className="font-black" style={{ color:T.sage }}> {recipe.needs.filter(n=>pantryNames.includes(n)).length}/{recipe.needs.length}</span> 主要食材配對
+                    </p>
+                  </div>
+                </div>
+              ) : recipe.needs.length > 0 ? (
+                /* fallback：無詳細食材時顯示 needs */
+                recipe.needs.map((n,i) => (
+                  <div key={i} className="flex items-center gap-3 py-2.5 border-b last:border-0" style={{ borderColor:T.cream3 }}>
+                    <span className="flex-1 text-sm font-semibold" style={{ color:T.text }}>{n}</span>
+                    {pantryNames.includes(n) ? <Check size={14} style={{color:T.sage}} /> : <span className="text-xs font-bold" style={{color:T.peach}}>欠缺</span>}
+                  </div>
+                ))
+              ) : (
                 <p className="text-sm text-center py-4" style={{ color:T.textFaint }}>食材資料從 Sheets 讀取中…</p>
               )}
-              {recipe.needs.map((n,i) => (
-                <div key={i} className="flex items-center gap-3 py-2.5 border-b last:border-0" style={{ borderColor:T.cream3 }}>
-                  <span className="flex-1 text-sm font-semibold" style={{ color:T.text }}>{n}</span>
-                  {pantryNames.includes(n) ? <Check size={14} style={{color:T.sage}} /> : <span className="text-xs font-bold" style={{color:T.peach}}>欠缺</span>}
-                </div>
-              ))}
+
               {recipe.optional?.length>0 && (
                 <>
                   <p className="text-xs font-black uppercase tracking-widest mt-4 mb-2" style={{ color:T.textFaint }}>可選食材</p>
