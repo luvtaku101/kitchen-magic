@@ -25,7 +25,7 @@
   select { -webkit-appearance: none; }
   .scrollbar-hide::-webkit-scrollbar { display: none; }
   .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
-  @keyframes fadeUp  { from { opacity:0; transform:translateY(12px) } to { opacity:1; transform:none } }
+  @keyframes fadeUp  { from { opacity:0; } to { opacity:1; } }
   @keyframes spin    { from { transform:rotate(0deg) } to { transform:rotate(360deg) } }
   @keyframes wobble  {
     0%,100% { transform: rotate(-3deg) scale(1.0) }
@@ -1457,7 +1457,7 @@ function App() {
         @import url('https://fonts.googleapis.com/css2?family=Lora:wght@400;600;700&display=swap');
       `}</style>
       <div className="max-w-lg mx-auto">
-        <header className="sticky top-0 z-40 safe-top" style={{ background:T.cream+"f0", backdropFilter:"blur(20px)", borderBottom:`1.5px solid ${T.cream3}` }}>
+        <header className="sticky top-0 z-40 safe-top" style={{ background:T.cream, borderBottom:`1.5px solid ${T.cream3}` }}>
           <div className="px-4 pt-4 pb-2">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2.5">
