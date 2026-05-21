@@ -337,10 +337,9 @@ function parseCSVtoRecipes(text) {
     const rawSteps   = getCol(cols, COL.steps);
     const rawFav     = getCol(cols, COL.favourites).toLowerCase();
 
-    // ✅ Main Ingredients 欄：乾淨食材名，直接按換行分割
-    // Fallback 到舊 cleanIngredients 如果 mainIngredients 欄沒有資料
+    // ✅ Main Ingredients 欄：換行已被 Worker 轉成 |
     const ingredients = rawMainIng
-      ? rawMainIng.split(/\n/).map(s => s.trim()).filter(s => s.length >= 1)
+      ? rawMainIng.split(/[|\n]/).map(s => s.trim()).filter(s => s.length >= 1)
       : cleanIngredients(rawIng);
 
     const tags = rawTags ? rawTags.split(/[、,，\n]/).map(s => s.trim()).filter(Boolean) : [];
