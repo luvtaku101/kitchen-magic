@@ -44,6 +44,18 @@
 
 <script type="text/babel">
 const { useState, useMemo, useEffect, useCallback, useRef } = React;
+const createPortal = ReactDOM.createPortal;
+
+// Portal wrapper — renders children directly into document.body
+// bypassing any parent stacking context (backdrop-filter, transform, etc.)
+function Modal({ children }) {
+  const el = useRef(document.createElement("div"));
+  useEffect(() => {
+    document.body.appendChild(el.current);
+    return () => document.body.removeChild(el.current);
+  }, []);
+  return createPortal(children, el.current);
+}
 
 // ── Lucide icon shim ──────────────────────────────────────────────────────────
 function Icon({ name, size = 16, color, style, className }) {
@@ -560,6 +572,7 @@ function AddItemModal({ defaultSection, onAdd, onClose }) {
   const pickQuick = ({n,e}) => { setName(n); setEmoji(e); setEmojiTab(false); };
   const submit = () => { if (!name.trim()) return; onAdd({id:uid(),name:name.trim(),emoji,section,qty:Number(qty),unit,dateAdded:dateStr,notes}); onClose(); };
   return (
+    <Modal>
     <div onMouseDown={e => e.target===e.currentTarget && onClose()} style={{ position:"fixed", top:0, left:0, right:0, bottom:0, zIndex:9999, background:"#3D2B1F88", display:"flex", alignItems:"flex-end", justifyContent:"center" }}>
 
       <div style={{ background:T.cream, position:"relative", zIndex:10000, width:"100%", maxWidth:"640px", borderRadius:"24px 24px 0 0", maxHeight:"92vh", overflowY:"auto", display:"flex", flexDirection:"column", boxShadow:"0 -8px 40px #3D2B1F33" }}>
@@ -680,6 +693,7 @@ function AddItemModal({ defaultSection, onAdd, onClose }) {
         </div>
       </div>
     </div>
+    </Modal>
   );
 }
 
@@ -885,6 +899,7 @@ function RecipeViewModal({ recipe, pantryNames, onClose }) {
   const missing = recipe.needs.filter(n => !pantryNames.includes(n));
   useEffect(() => { document.body.style.overflow = "hidden"; return () => { document.body.style.overflow = ""; }; }, []);
   return (
+    <Modal>
     <div onMouseDown={e => e.target===e.currentTarget && onClose()} style={{ position:"fixed", top:0, left:0, right:0, bottom:0, zIndex:9999, background:"#3D2B1F99", display:"flex", alignItems:"flex-end", justifyContent:"center" }}>
 
       <div style={{ background:T.cream, position:"relative", zIndex:10000, width:"100%", maxWidth:"640px", borderRadius:"24px 24px 0 0", maxHeight:"92vh", overflowY:"auto", boxShadow:"0 -8px 40px #3D2B1F33" }}>
@@ -1004,10 +1019,9 @@ function RecipeViewModal({ recipe, pantryNames, onClose }) {
         </div>
       </div>
     </div>
+    </Modal>
   );
 }
-
-// ── RECIPES TAB ────────────────────────────────────────────────────────────────
 function RecipesTab({ recipes, items, busyToday, syncStatus, lastSync, syncError, onRefresh }) {
   const [search, setSearch]       = useState("");
   const [cuisine, setCuisine]     = useState("all");
