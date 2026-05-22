@@ -189,13 +189,19 @@ const DEFAULT_ESSENTIALS = [
 
 // ── AI VISION ──────────────────────────────────────────────────────────────────
 async function callVisionAI(base64, mediaType, mode) {
-  const API_URL = "https://kitchen-magic-ai.mktg201.workers.dev";
+  // Cloudflare Worker proxy → Gemini
+  // Pass model as query param so the Worker can use it if it supports ?model=
+  const BASE_URL = "https://kitchen-magic-ai.mktg201.workers.dev";
+  const MODEL    = "gemini-2.0-flash";   // fastest, highest rate limits
+  const API_URL  = BASE_URL + "?model=" + MODEL;
+
   const isRestock = mode === "restock";
   const prompt = isRestock
     ? `You are analyzing a grocery or kitchen photo. Identify ALL visible food items. For each item decide which storage: fridge, frozen, or pantry. Reply with ONLY a valid JSON object, no markdown, no extra text: {"mode":"restock","items":[{"name":"雞蛋","nameEn":"Eggs","emoji":"🥚","section":"fridge","qty":6,"unit":"個","confidence":"high"}],"summary":"找到 N 件食材"}`
     : `You are analyzing a photo of empty packaging or a fridge. Identify items that are EMPTY or USED UP. Reply with ONLY a valid JSON object, no markdown: {"mode":"usedup","items":[{"name":"牛奶","nameEn":"Milk","emoji":"🥛","section":"fridge","confidence":"high"}],"summary":"發現 N 件需補充"}`;
 
   const body = {
+    model: MODEL,   // include in body too in case Worker reads it from here
     contents: [{
       parts: [
         { inline_data: { mime_type: mediaType, data: base64 } },
@@ -205,35 +211,61 @@ async function callVisionAI(base64, mediaType, mode) {
     generationConfig: { temperature: 0.1, maxOutputTokens: 2048 }
   };
 
-  let res;
-  try {
-    res = await fetch(API_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-  } catch(netErr) {
-    throw new Error("網絡連接失敗: " + netErr.message);
+  // Retry up to 3 times with backoff for 429 rate-limit errors
+  const MAX_RETRIES = 3;
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    let res;
+    try {
+      res = await fetch(API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    } catch(netErr) {
+      throw new Error("網絡連接失敗: " + netErr.message);
+    }
+
+    let rawText;
+    try { rawText = await res.text(); } catch(e) { throw new Error("讀取回應失敗"); }
+
+    // 429 = rate limit → wait and retry
+    if (res.status === 429) {
+      if (attempt < MAX_RETRIES) {
+        await new Promise(r => setTimeout(r, attempt * 3000)); // 3s, 6s
+        continue;
+      }
+      throw new Error("AI 配額暫時已滿 (429)。已自動重試 " + MAX_RETRIES + " 次。請等 30 秒後再掃描，或檢查 Cloudflare Worker 是否使用 gemini-2.0-flash 模型。");
+    }
+
+    if (!res.ok) throw new Error("API錯誤 " + res.status + ": " + rawText.slice(0, 200));
+
+    let envelope;
+    try { envelope = JSON.parse(rawText); } catch(e) {
+      throw new Error("回應非JSON (" + rawText.length + " chars): " + rawText.slice(0, 200));
+    }
+
+    if (envelope.error) {
+      const msg = envelope.error.message || JSON.stringify(envelope.error);
+      const isQuota = msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED") || msg.includes("quota");
+      if (isQuota && attempt < MAX_RETRIES) {
+        await new Promise(r => setTimeout(r, attempt * 3000));
+        continue;
+      }
+      if (isQuota) throw new Error("AI 配額已滿。請等 30 秒後重試。建議更新 Worker 使用 gemini-2.0-flash 模型。");
+      throw new Error("Gemini錯誤: " + msg);
+    }
+
+    const text = envelope && envelope.candidates && envelope.candidates[0] &&
+      envelope.candidates[0].content && envelope.candidates[0].content.parts &&
+      envelope.candidates[0].content.parts[0] && envelope.candidates[0].content.parts[0].text;
+    if (!text) throw new Error("AI無回應 — 回應內容: " + rawText.slice(0, 200));
+
+    const start = text.indexOf("{"); const end = text.lastIndexOf("}");
+    if (start === -1 || end === -1) throw new Error("AI回應格式錯誤: " + text.slice(0, 100));
+
+    try { return JSON.parse(text.slice(start, end + 1)); }
+    catch(e) { throw new Error("JSON解析失敗: " + text.slice(0, 100)); }
   }
-
-  let rawText;
-  try { rawText = await res.text(); } catch(e) { throw new Error("讀取回應失敗"); }
-  if (!res.ok) throw new Error("API錯誤 " + res.status + ": " + rawText.slice(0, 200));
-
-  let envelope;
-  try { envelope = JSON.parse(rawText); } catch(e) {
-    throw new Error("回應非JSON (" + rawText.length + " chars): " + rawText.slice(0, 200));
-  }
-  if (envelope.error) throw new Error("Gemini錯誤: " + (envelope.error.message || JSON.stringify(envelope.error)));
-
-  const text = envelope?.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) throw new Error("AI無回應 — 回應內容: " + rawText.slice(0, 200));
-
-  const start = text.indexOf("{"); const end = text.lastIndexOf("}");
-  if (start === -1 || end === -1) throw new Error("AI回應格式錯誤: " + text.slice(0, 100));
-
-  try { return JSON.parse(text.slice(start, end + 1)); }
-  catch(e) { throw new Error("JSON解析失敗: " + text.slice(0, 100)); }
 }
 
 // ── GOOGLE SHEETS ──────────────────────────────────────────────────────────────
@@ -691,38 +723,85 @@ function AddItemModal({ defaultSection, onAdd, onClose }) {
 }
 
 // ── FOOD ITEM ROW ──────────────────────────────────────────────────────────────
-function FoodItemRow({ item, onDelete }) {
+function FoodItemRow({ item, onDelete, onMove }) {
   const sec = SECTIONS.find(s => s.id === item.section);
   const days = daysDiff(item.dateAdded);
   const badge = freshBadge(days, sec.alertDays);
   const isAlert = days >= sec.alertDays;
   const isWarn  = !isAlert && days >= Math.floor(sec.alertDays * 0.7);
-  const [confirming, setConfirming] = useState(false);
+  const [mode, setMode] = useState("idle"); // idle | move | delete
+  // Sections you can move TO (exclude current)
+  const moveTargets = SECTIONS.filter(s => s.id !== item.section);
+  const handleMove = (targetId) => {
+    const isDefrost = item.section === "frozen" && targetId === "fridge";
+    const newDate = (isDefrost || item.section === "frozen") ? todayStr() : item.dateAdded;
+    const newNotes = isDefrost
+      ? (item.notes ? item.notes + " · 已解凍" : "已解凍")
+      : item.notes;
+    onMove(item.id, targetId, newDate, newNotes);
+    setMode("idle");
+  };
   return (
-    <div className="flex items-center gap-3 px-3.5 py-3 rounded-2xl"
+    <div className="rounded-2xl overflow-hidden"
       style={{ background:isAlert?T.alert3:isWarn?T.warn3:T.cream2, border:`1.5px solid ${isAlert?T.alert2:isWarn?T.warn2:T.cream3}` }}>
-      <span className="text-2xl flex-shrink-0">{isAlert?"⚠️":item.emoji}</span>
-      <div className="flex-1 min-w-0">
-        <p className="font-bold text-sm truncate" style={{ color:isAlert?T.alert:isWarn?T.warn:T.text }}>
-          {isAlert && <span>{item.emoji} </span>}{item.name}
-        </p>
-        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-          <span className="text-xs" style={{ color:T.textFaint }}>{item.qty}{item.unit}</span>
-          <span className="text-xs px-2 py-0.5 rounded-full font-bold" style={{ background:badge.bg, color:badge.color }}>{badge.text}</span>
-          {item.notes && <span className="text-xs italic truncate" style={{ color:T.textSoft, maxWidth:100 }}>{item.notes}</span>}
+      <div className="flex items-center gap-3 px-3.5 py-3">
+        <span className="text-2xl flex-shrink-0">{isAlert?"⚠️":item.emoji}</span>
+        <div className="flex-1 min-w-0">
+          <p className="font-bold text-sm truncate" style={{ color:isAlert?T.alert:isWarn?T.warn:T.text }}>
+            {isAlert && <span>{item.emoji} </span>}{item.name}
+          </p>
+          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+            <span className="text-xs" style={{ color:T.textFaint }}>{item.qty}{item.unit}</span>
+            <span className="text-xs px-2 py-0.5 rounded-full font-bold" style={{ background:badge.bg, color:badge.color }}>{badge.text}</span>
+            {item.notes && <span className="text-xs italic truncate" style={{ color:T.textSoft, maxWidth:100 }}>{item.notes}</span>}
+          </div>
         </div>
+        {/* Action buttons — idle state */}
+        {mode === "idle" && (
+          <div className="flex items-center gap-1 flex-shrink-0">
+            <button type="button" onClick={() => setMode("move")}
+              className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background:T.sky3 }}
+              title="移動至其他位置">
+              <Icon name="arrow-right-left" size={12} style={{color:T.sky}} />
+            </button>
+            <button type="button" onClick={() => setMode("delete")}
+              className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background:T.cream3 }}>
+              <Trash2 size={12} style={{color:T.textSoft}} />
+            </button>
+          </div>
+        )}
+        {/* Delete confirm */}
+        {mode === "delete" && (
+          <div className="flex items-center gap-1 flex-shrink-0">
+            <button type="button" onClick={() => onDelete(item.id)}
+              className="text-xs px-2.5 py-1.5 rounded-xl font-black text-white" style={{ background:T.alert }}>刪除</button>
+            <button type="button" onClick={() => setMode("idle")}
+              className="text-xs px-2.5 py-1.5 rounded-xl font-bold" style={{ background:T.cream3, color:T.textMid }}>取消</button>
+          </div>
+        )}
+        {/* Move — show X to cancel */}
+        {mode === "move" && (
+          <button type="button" onClick={() => setMode("idle")}
+            className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0" style={{ background:T.cream3 }}>
+            <X size={12} style={{color:T.textMid}} />
+          </button>
+        )}
       </div>
-      {!confirming ? (
-        <button type="button" onClick={() => setConfirming(true)}
-          className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0" style={{ background:T.cream3 }}>
-          <Trash2 size={12} style={{color:T.textSoft}} />
-        </button>
-      ) : (
-        <div className="flex items-center gap-1 flex-shrink-0">
-          <button type="button" onClick={() => onDelete(item.id)}
-            className="text-xs px-2.5 py-1.5 rounded-xl font-black text-white" style={{ background:T.alert }}>刪除</button>
-          <button type="button" onClick={() => setConfirming(false)}
-            className="text-xs px-2.5 py-1.5 rounded-xl font-bold" style={{ background:T.cream3, color:T.textMid }}>取消</button>
+      {/* Move target picker — expands below */}
+      {mode === "move" && (
+        <div className="px-3.5 pb-3 flex flex-wrap gap-2">
+          <p className="w-full text-xs font-black mb-1" style={{color:T.textSoft}}>移動至：</p>
+          {moveTargets.map(t => {
+            const isDefrost = item.section === "frozen" && t.id === "fridge";
+            return (
+              <button key={t.id} type="button" onClick={() => handleMove(t.id)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-black border-2 active:scale-95"
+                style={{ background:t.bg, borderColor:t.color, color:t.color }}>
+                {t.emoji} {t.label}
+                {isDefrost && <span style={{color:T.frozen}}>· 日期重設今日 ❄️→🧊</span>}
+              </button>
+            );
+          })}
         </div>
       )}
     </div>
@@ -738,6 +817,9 @@ function StorageTab({ items, setItems }) {
   const openModal = (section="fridge") => { setModalSection(section); setModalOpen(true); };
   const deleteItem = useCallback(id => setItems(p => p.filter(i => i.id !== id)), [setItems]);
   const addItem    = useCallback(item => setItems(p => [item,...p]), [setItems]);
+  const moveItem   = useCallback((id, newSection, newDate, newNotes) => {
+    setItems(p => p.map(i => i.id === id ? {...i, section:newSection, dateAdded:newDate, notes:newNotes} : i));
+  }, [setItems]);
   const alerts = useMemo(() => items.filter(i => { const s=SECTIONS.find(x=>x.id===i.section); return s&&daysDiff(i.dateAdded)>=s.alertDays; }), [items]);
   const warns  = useMemo(() => items.filter(i => { const s=SECTIONS.find(x=>x.id===i.section); const d=daysDiff(i.dateAdded); return s&&d>=Math.floor(s.alertDays*0.7)&&d<s.alertDays; }), [items]);
   const counts = useMemo(() => Object.fromEntries(SECTIONS.map(s => [s.id, items.filter(i => i.section===s.id).length])), [items]);
@@ -819,7 +901,7 @@ function StorageTab({ items, setItems }) {
                 <h3 className="font-black" style={{ color:sec.color, fontFamily:"Georgia,serif" }}>{sec.label}</h3>
                 <span className="text-xs px-2 py-0.5 rounded-full font-bold" style={{ background:sec.bg, color:sec.color }}>{list.length}</span>
               </div>
-              <div className="space-y-2">{list.map(item => <FoodItemRow key={item.id} item={item} onDelete={deleteItem} />)}</div>
+              <div className="space-y-2">{list.map(item => <FoodItemRow key={item.id} item={item} onDelete={deleteItem} onMove={moveItem} />)}</div>
             </div>
           ))}
         </div>
