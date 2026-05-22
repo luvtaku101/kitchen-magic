@@ -447,20 +447,7 @@ const freshBadge = (days, alertDays) => {
 // ── INIT ITEMS ─────────────────────────────────────────────────────────────────
 const mk = (id,name,emoji,section,dateAdded,qty,unit,notes="") =>
   ({id:`init_${id}`,name,emoji,section,dateAdded,qty,unit,notes});
-const INIT_ITEMS = [
-  mk(1,"雞蛋","🥚","fridge","2025-05-12",6,"隻"),
-  mk(2,"韭蔥","🌿","fridge","2025-05-11",2,"條"),
-  mk(3,"芝士","🧀","fridge","2025-05-10",1,"包","快到期"),
-  mk(4,"牛奶","🥛","fridge","2025-05-13",1,"公升"),
-  mk(5,"雞肉","🍗","frozen","2025-04-20",500,"克"),
-  mk(6,"豬肉","🥩","frozen","2025-04-25",300,"克"),
-  mk(7,"白米","🍚","pantry","2025-05-01",2,"公斤"),
-  mk(8,"茄汁豆","🫘","pantry","2025-05-05",2,"罐"),
-  mk(9,"生抽","🫙","pantry","2025-04-15",1,"樽"),
-  mk(10,"薯仔","🥔","pantry","2025-05-08",4,"個"),
-  mk(11,"昨晚剩飯","🍚","leftover","2025-05-13",1,"碗"),
-  mk(12,"雞湯","🍲","leftover","2025-05-11",1,"煲","細路唔食咗"),
-];
+const INIT_ITEMS = [];  // 清空示範食物 — 請自行輸入真實庫存
 
 const LOCAL_RECIPES = [
   { id:1, title:"日式蔥燒雞",   emoji:"🍗", cuisine:"japanese", time:15, color:T.honey,
@@ -1151,54 +1138,219 @@ function RecipesTab({ recipes, items, busyToday, syncStatus, lastSync, syncError
 }
 
 // ── PLAN TAB ──────────────────────────────────────────────────────────────────
+// ── RECIPE SEARCH PICKER MODAL ────────────────────────────────────────────────
+function RecipePickerModal({ recipes, items, dayLabel, onPick, onClose }) {
+  const [search, setSearch] = useState("");
+  const pantryNames = useMemo(() => items.filter(i=>i.section!=="leftover").map(i=>i.name), [items]);
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase();
+    return recipes.filter(r => !q || r.title.toLowerCase().includes(q) || r.tags?.some(t=>t.toLowerCase().includes(q)));
+  }, [recipes, search]);
+  useEffect(() => { document.body.style.overflow = "hidden"; return () => { document.body.style.overflow = ""; }; }, []);
+  return (
+    <Modal>
+      <div onMouseDown={e => e.target===e.currentTarget && onClose()}
+        style={{ position:"fixed", top:0, left:0, right:0, bottom:0, zIndex:9999, background:"#3D2B1F88", display:"flex", alignItems:"flex-end", justifyContent:"center" }}>
+        <div style={{ background:T.cream, position:"relative", zIndex:10000, width:"100%", maxWidth:"640px", borderRadius:"24px 24px 0 0", maxHeight:"85vh", display:"flex", flexDirection:"column", boxShadow:"0 -8px 40px #3D2B1F33" }}>
+          <div className="flex-shrink-0 px-5 pt-5 pb-3" style={{ borderBottom:`1.5px solid ${T.cream3}` }}>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-black text-lg" style={{ color:T.text, fontFamily:"Georgia,serif" }}>🔍 揀食譜 — {dayLabel}</h3>
+              <button onClick={onClose} className="w-9 h-9 rounded-full flex items-center justify-center" style={{ background:T.cream3 }}>
+                <X size={16} style={{color:T.textMid}} />
+              </button>
+            </div>
+            <div className="relative">
+              <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2" style={{color:T.textFaint}} />
+              <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="搜尋食譜名稱或標籤…" autoFocus
+                className="w-full pl-8 pr-8 py-2.5 rounded-xl border-2 text-sm outline-none"
+                style={{ background:T.cream2, borderColor:T.cream3, color:T.text }} />
+              {search && <button onClick={()=>setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2"><X size={12} style={{color:T.textFaint}} /></button>}
+            </div>
+          </div>
+          <div className="overflow-y-auto flex-1 px-4 py-3 space-y-2">
+            {filtered.length === 0 && (
+              <div className="text-center py-10"><span className="text-4xl">🌿</span><p className="mt-2 text-sm font-black" style={{color:T.textSoft}}>搵唔到食譜</p></div>
+            )}
+            {filtered.map(r => {
+              const matched = r.needs.filter(n=>pantryNames.includes(n)).length;
+              const pct = r.needs.length ? Math.round((matched/r.needs.length)*100) : 100;
+              const canMake = pct===100;
+              return (
+                <button key={r.id} onClick={()=>{ onPick(r); onClose(); }}
+                  className="w-full flex items-center gap-3 px-3.5 py-3 rounded-2xl text-left active:scale-[0.98]"
+                  style={{ background:canMake?r.color+"18":T.cream2, border:`1.5px solid ${canMake?r.color:T.cream3}` }}>
+                  <span className="text-2xl flex-shrink-0">{r.emoji}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-black text-sm truncate" style={{ color:T.text, fontFamily:"Georgia,serif" }}>{r.title}</p>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className="text-xs flex items-center gap-0.5" style={{color:T.textSoft}}><Clock size={9}/>{r.time}分</span>
+                      <span className="text-xs font-bold" style={{color:canMake?T.sage:T.honey}}>{pct}% 齊料</span>
+                      {r.fromSheet && <span className="text-xs font-bold" style={{color:T.sky}}>📡</span>}
+                    </div>
+                  </div>
+                  <Check size={14} style={{color:canMake?T.sage:T.cream3,flexShrink:0}} />
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 function PlanTab({ recipes, items }) {
   const dow = getDow();
-  const week = Array.from({length:7},(_,i) => (dow+i)%7);
-  const pantryNames = useMemo(() => items.filter(i=>i.section!=="leftover").map(i=>i.name), [items]);
+  // Build the 7-day array with actual calendar dates
+  const today = new Date(); today.setHours(0,0,0,0);
+  const weekDays = Array.from({length:7},(_,i) => {
+    const d = new Date(today); d.setDate(today.getDate()+i);
+    return { dow: d.getDay(), date: d, idx: i };
+  });
+
+  const pantryNames  = useMemo(() => items.filter(i=>i.section!=="leftover").map(i=>i.name), [items]);
+  const frozenItems  = useMemo(() => items.filter(i=>i.section==="frozen"), [items]);
+
+  // mealPlan: { [dateStr]: recipe | null }
+  const [mealPlan, setMealPlan]     = useState({});
+  const [pickerDay, setPickerDay]   = useState(null); // { dateStr, label }
+
+  const dateStr = (d) => d.toISOString().split("T")[0];
+
+  const setMeal = (ds, recipe) => setMealPlan(p => ({...p, [ds]: recipe}));
+  const clearMeal = (ds) => setMealPlan(p => { const n={...p}; delete n[ds]; return n; });
+
+  // Defrost reminders: for each day, check if recipe has frozen ingredients in stock
+  // Remind the PREVIOUS day (or today if meal is today)
+  const defrostReminders = useMemo(() => {
+    const reminders = {};
+    weekDays.forEach(({date, idx}) => {
+      const ds = dateStr(date);
+      const recipe = mealPlan[ds];
+      if (!recipe) return;
+      const frozenNeeded = recipe.needs.filter(n =>
+        frozenItems.some(f => f.name === n || f.name.includes(n) || n.includes(f.name))
+      );
+      if (frozenNeeded.length === 0) return;
+      // Remind on the day before (or today if meal is today)
+      const remindDate = new Date(date); remindDate.setDate(date.getDate() - 1);
+      const remindDs = dateStr(remindDate);
+      if (!reminders[remindDs]) reminders[remindDs] = [];
+      reminders[remindDs].push({ recipe: recipe.title, emoji: recipe.emoji, items: frozenNeeded });
+    });
+    return reminders;
+  }, [mealPlan, frozenItems, weekDays]);
+
+  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const fmtDate = (d) => `${d.getDate()} ${MONTHS[d.getMonth()]}`;
+
   return (
     <div>
       <h2 className="font-black text-xl mb-1" style={{ color:T.text, fontFamily:"Georgia,serif" }}>📅 本週餐單</h2>
-      <p className="text-xs mb-4" style={{ color:T.textSoft }}>忙碌日自動推薦快手食譜</p>
+      <p className="text-xs mb-4" style={{ color:T.textSoft }}>撳 <strong>+</strong> 搜尋食譜加入某日餐單 · 忙碌日自動提示快手食譜</p>
+
+      {/* Defrost reminder banner */}
+      {Object.keys(defrostReminders).length > 0 && (
+        <div className="mb-4 rounded-2xl overflow-hidden" style={{ border:`2px solid ${T.frozen}`, background:T.frozen3 }}>
+          <div className="flex items-center gap-2 px-4 py-2.5" style={{ background:T.frozen }}>
+            <span className="text-base">❄️</span>
+            <p className="font-black text-sm text-white">解凍提醒</p>
+          </div>
+          <div className="px-4 py-3 space-y-2">
+            {weekDays.map(({date}) => {
+              const ds = dateStr(date);
+              const reminders = defrostReminders[ds];
+              if (!reminders) return null;
+              const isToday = ds === dateStr(today);
+              return (
+                <div key={ds} className="flex items-start gap-2">
+                  <span className="text-xs font-black px-2 py-0.5 rounded-full flex-shrink-0 mt-0.5"
+                    style={{ background:isToday?T.frozen:"#ffffff55", color:isToday?"#fff":T.frozen }}>
+                    {isToday?"今日":fmtDate(date)}
+                  </span>
+                  <div>
+                    {reminders.map((r,i) => (
+                      <p key={i} className="text-xs leading-relaxed" style={{color:"#2a5a7a"}}>
+                        記得解凍 <strong>{r.items.join("、")}</strong>，明日煮 {r.emoji} {r.recipe}
+                      </p>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       <div className="space-y-3">
-        {week.map((dayDow,idx) => {
-          const isToday = idx===0; const dayBusy = isBusy(dayDow);
-          const pool = [...recipes].filter(r=>dayBusy?r.time<=20:true).sort((a,b) => {
-            const pa=a.needs.filter(n=>pantryNames.includes(n)).length/Math.max(a.needs.length,1);
-            const pb=b.needs.filter(n=>pantryNames.includes(n)).length/Math.max(b.needs.length,1);
-            return pb-pa;
-          });
-          const pick = pool[idx%Math.max(pool.length,1)];
-          const pct = pick ? Math.round((pick.needs.filter(n=>pantryNames.includes(n)).length/Math.max(pick.needs.length,1))*100) : 0;
+        {weekDays.map(({ dow: dayDow, date, idx }) => {
+          const ds = dateStr(date);
+          const isToday = idx === 0;
+          const dayBusy = isBusy(dayDow);
+          const assigned = mealPlan[ds] || null;
+          const pct = assigned ? Math.round((assigned.needs.filter(n=>pantryNames.includes(n)).length/Math.max(assigned.needs.length,1))*100) : 0;
+          const dayLabel = `週${DAYS_ZH[dayDow]} ${fmtDate(date)}`;
+
           return (
-            <div key={dayDow} className="rounded-3xl overflow-hidden"
+            <div key={ds} className="rounded-3xl overflow-hidden"
               style={{ border:`2px solid ${isToday?T.honey:T.cream3}`, boxShadow:isToday?`0 4px 16px ${T.honey}33`:"none" }}>
+              {/* Day header */}
               <div className="flex items-center justify-between px-4 py-2.5" style={{ background:dayBusy?T.honey3:T.cream2 }}>
                 <div className="flex items-center gap-2">
                   {isToday && <span className="text-xs font-black px-2.5 py-0.5 rounded-full text-white" style={{background:T.honey}}>今日</span>}
-                  <span className="font-black" style={{color:T.text}}>週{DAYS_ZH[dayDow]}</span>
+                  <span className="font-black text-sm" style={{color:T.text}}>週{DAYS_ZH[dayDow]}</span>
+                  <span className="text-xs" style={{color:T.textFaint}}>{fmtDate(date)}</span>
                   {dayBusy && <span className="text-xs font-bold flex items-center gap-0.5" style={{color:T.terra}}><Zap size={10}/>忙碌日</span>}
                 </div>
-                {dayBusy && <span className="text-xs" style={{color:T.textFaint}}>≤20分鐘</span>}
+                <button onClick={() => setPickerDay({ dateStr: ds, label: dayLabel })}
+                  className="w-7 h-7 rounded-full flex items-center justify-center active:scale-90"
+                  style={{ background:T.sage, color:"#fff" }}>
+                  <Plus size={14} />
+                </button>
               </div>
-              {pick && (
+
+              {/* Assigned recipe */}
+              {assigned ? (
                 <div className="px-4 py-3 flex items-center gap-3" style={{ background:T.cream }}>
-                  <span className="text-2xl">{pick.emoji}</span>
+                  <span className="text-2xl">{assigned.emoji}</span>
                   <div className="flex-1 min-w-0">
                     <p className="font-black text-sm truncate" style={{ color:T.text, fontFamily:"Georgia,serif" }}>
-                      {pick.title}{pick.fromSheet && <span className="ml-1 text-xs font-normal" style={{color:T.sky}}>📡</span>}
+                      {assigned.title}{assigned.fromSheet && <span className="ml-1 text-xs font-normal" style={{color:T.sky}}>📡</span>}
                     </p>
                     <p className="text-xs flex items-center gap-1 mt-0.5" style={{ color:T.textSoft }}>
-                      <Clock size={9}/>{pick.time}分鐘
-                      {pick.favourites?.length>0 && <span>· {pick.favourites.map(fid=>FAMILY.find(f=>f.id===fid)?.emoji).join("")}最愛</span>}
+                      <Clock size={9}/>{assigned.time}分鐘
+                      <span className="font-bold" style={{color:pct===100?T.sage:T.honey}}>· {pct}% 齊料</span>
                     </p>
                   </div>
-                  <span className="text-xs font-black" style={{ color:pct===100?T.sage:T.honey }}>{pct}%</span>
+                  <button onClick={() => clearMeal(ds)} className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0"
+                    style={{ background:T.cream3 }}>
+                    <X size={12} style={{color:T.textSoft}} />
+                  </button>
                 </div>
+              ) : (
+                <button onClick={() => setPickerDay({ dateStr: ds, label: dayLabel })}
+                  className="w-full px-4 py-3 flex items-center gap-2 text-left"
+                  style={{ background:T.cream }}>
+                  <span className="text-lg">🍽️</span>
+                  <span className="text-sm" style={{color:T.textFaint}}>
+                    {dayBusy ? "撳 + 揀快手食譜（≤20分鐘）" : "撳 + 揀今日食譜…"}
+                  </span>
+                </button>
               )}
             </div>
           );
         })}
       </div>
+
+      {pickerDay && (
+        <RecipePickerModal
+          recipes={recipes}
+          items={items}
+          dayLabel={pickerDay.label}
+          onPick={(r) => setMeal(pickerDay.dateStr, r)}
+          onClose={() => setPickerDay(null)}
+        />
+      )}
     </div>
   );
 }
