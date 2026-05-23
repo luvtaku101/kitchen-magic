@@ -266,15 +266,16 @@ function parseCSVtoRecipes(text) {
     return -1;
   };
   const COL = {
-    name:       colIdx(["名稱","食譜名","recipe","name","title","標題"]),
-    ingredients:colIdx(["食材","材料","ingredient","ingredients"]),
-    tags:       colIdx(["標籤","分類","tag","tags","type","類型","cuisine"]),
-    time:       colIdx(["timings","timing","時間","烹飪時間","分鐘","minutes","time","min"]),
-    emoji:      colIdx(["emoji","表情","icon"]),
-    notes:      colIdx(["備注","備註","notes","note","tips","提示"]),
-    steps:      colIdx(["步驟","做法","steps","instructions"]),
-    cuisine:    colIdx(["菜系","cuisine","style"]),
-    favourites: colIdx(["喜歡","最愛","favourite","favorites","family"]),
+    name:        colIdx(["recipename","食譜名","recipe","name","title","標題"]),
+    ingredients: colIdx(["ingredients","食材","材料"]),
+    mainIng:     colIdx(["mainingredients","主要食材","mainingredient"]),
+    tags:        colIdx(["whatk","標籤","分類","tag","tags","type","類型","cuisine"]),
+    time:        colIdx(["timings","timing","時間","烹飪時間","分鐘","minutes","time","min"]),
+    emoji:       colIdx(["emoji","表情","icon"]),
+    notes:       colIdx(["備注","備註","notes","note","tips","提示"]),
+    steps:       colIdx(["cookingsteps","步驟","做法","steps","instructions"]),
+    cuisine:     colIdx(["whatk","菜系","cuisine","style"]),
+    favourites:  colIdx(["whosfavourite","whofavourite","喜歡","最愛","favourite","favorites","family"]),
   };
   const getCol = (cols, idx) => idx !== -1 ? (cols[idx] || "").replace(/^"|"$/g,"").trim() : "";
   const tagToCuisine = (rawTags, rawCuisine) => {
@@ -290,12 +291,21 @@ function parseCSVtoRecipes(text) {
   lines.slice(1).forEach((line, idx) => {
     const cols = parseLine(line);
     const name = getCol(cols, COL.name); if (!name) return;
-    const rawIng = getCol(cols, COL.ingredients);
+    const rawIng     = getCol(cols, COL.ingredients) || getCol(cols, COL.mainIng);
+    const rawMainIng = getCol(cols, COL.mainIng);
     const rawTags = getCol(cols, COL.tags);
     const rawTime = getCol(cols, COL.time);
     const rawCuisine = getCol(cols, COL.cuisine);
-    const splitField = (raw) => raw.split(/[|｜\r\n]+/).map(s => s.replace(/^\d+[\.\、\s]+/, "").trim()).filter(Boolean);
+    const splitField = (raw) => raw
+      .split(/[|｜\r\n]+/)
+      .map(s => s
+        .replace(/^[\*\-\d\.\、\s]+/, "")  // strip leading bullets/numbers
+        .replace(/\[\d[\d,\s]*\]$/g, "")   // strip trailing refs like [1] [1,2,3]
+        .trim()
+      )
+      .filter(Boolean);
     const ingredients = rawIng ? splitField(rawIng) : [];
+    const mainIngredients = rawMainIng ? splitField(rawMainIng) : ingredients;
     const tags = rawTags ? rawTags.split(/[|｜、,，\r\n]/).map(s => s.trim()).filter(Boolean) : [];
     const timeRaw = parseInt(rawTime);
     const time = (timeRaw > 0 && timeRaw <= 480) ? timeRaw : 30;
@@ -308,7 +318,7 @@ function parseCSVtoRecipes(text) {
     const cuisine = tagToCuisine(rawTags, rawCuisine);
     const palette = [T.honey, T.peach, T.sage, T.terra2, T.sky, T.rose, T.sage2, T.honey2];
     const color = palette[idx % palette.length];
-    recipes.push({ id:`sheet_${idx+1}`, title:name, emoji, cuisine, time, color, tags, needs:ingredients, optional:[], steps, notes, favourites, fasterMethod:null, fromSheet:true });
+    recipes.push({ id:`sheet_${idx+1}`, title:name, emoji, cuisine, time, color, tags, needs:mainIngredients, ingredients, optional:[], steps, notes, favourites, fasterMethod:null, fromSheet:true });
   });
   return recipes;
 }
@@ -1026,10 +1036,9 @@ function RecipeViewModal({ recipe, pantryNames, onClose, onAddToRestock }) {
           </div>
           {tab==="ingredients" && (
             <div>
-              {recipe.needs.map((n,i) => (
-                <div key={i} className="flex items-center gap-3 py-2.5 border-b last:border-0" style={{ borderColor:T.cream3 }}>
-                  <span className="flex-1 text-sm font-semibold" style={{ color:T.text }}>{n}</span>
-                  {pantryNames.includes(n) ? <Check size={14} style={{color:T.sage}} /> : <span className="text-xs font-bold" style={{color:T.peach}}>欠缺</span>}
+              {(recipe.ingredients && recipe.ingredients.length > 0 ? recipe.ingredients : recipe.needs).map((n,i) => (
+                <div key={i} className="py-2.5 border-b last:border-0" style={{ borderColor:T.cream3 }}>
+                  <span className="text-sm" style={{ color:T.text }}>{n}</span>
                 </div>
               ))}
               {recipe.optional?.length>0 && (
