@@ -224,8 +224,9 @@ async function callVisionAI(base64, mediaType, mode) {
 }
 
 // ── GOOGLE SHEETS ──────────────────────────────────────────────────────────────
-const SHEET_ID  = "1r1ly3ojY624Vcuae-gumuGOTqBzsl2fbO4E7sfOUz2w";
-const PROXY_URL = `https://kitchen-magic-ai.mktg201.workers.dev/sheets`;
+const SHEET_ID    = "1r1ly3ojY624Vcuae-gumuGOTqBzsl2fbO4E7sfOUz2w";
+const WORKER_URL  = `https://kitchen-magic-ai.mktg201.workers.dev/sheets`;
+const DIRECT_URL  = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=0`;
 
 function parseCSVtoRecipes(text) {
   const lines = text.trim().split("\n").filter(Boolean);
@@ -298,16 +299,33 @@ function useSheetRecipes() {
     if (abortRef.current) abortRef.current.abort();
     abortRef.current = new AbortController();
     setStatus("loading"); setErrorMsg("");
-    try {
-      const res = await fetch(PROXY_URL, { signal: abortRef.current.signal, cache:"no-store" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const text = await res.text();
-      setSheetRecipes(parseCSVtoRecipes(text));
-      setStatus("success"); setLastSync(new Date());
-    } catch(err) {
-      if (err.name === "AbortError") return;
-      setStatus("error"); setErrorMsg(err.message || "無法連接 Google Sheets");
+    const signal = abortRef.current.signal;
+    // Try Worker first, fall back to direct Google URL
+    const urls = [WORKER_URL, DIRECT_URL];
+    let lastErr = "";
+    for (const url of urls) {
+      try {
+        const res = await fetch(url, { signal, cache:"no-store" });
+        if (!res.ok) { lastErr = `HTTP ${res.status}`; continue; }
+        const text = await res.text();
+        if (!text || text.trim().length < 10) { lastErr = "空回應"; continue; }
+        // Worker returns JSON wrapper sometimes; detect CSV vs JSON
+        let csvText = text;
+        try {
+          const j = JSON.parse(text);
+          if (j.csv) csvText = j.csv;
+        } catch(e) { /* it's plain CSV, fine */ }
+        const parsed = parseCSVtoRecipes(csvText);
+        if (parsed.length === 0) { lastErr = "無食譜數據"; continue; }
+        setSheetRecipes(parsed);
+        setStatus("success"); setLastSync(new Date());
+        return;
+      } catch(err) {
+        if (err.name === "AbortError") return;
+        lastErr = err.message || "連接失敗";
+      }
     }
+    setStatus("error"); setErrorMsg(lastErr || "無法連接 Google Sheets");
   }, []);
   useEffect(() => { fetchRecipes(); return () => abortRef.current?.abort(); }, [fetchRecipes]);
   return { sheetRecipes, status, lastSync, errorMsg, refresh: fetchRecipes };
@@ -1123,51 +1141,231 @@ function RecipesTab({ recipes, items, busyToday, syncStatus, lastSync, syncError
 }
 
 // ── PLAN TAB ──────────────────────────────────────────────────────────────────
-function PlanTab({ recipes, items }) {
+// Build a stable 7-day date key array starting from today
+function getWeekDateKeys() {
+  const keys = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(); d.setDate(d.getDate() + i);
+    keys.push(d.toISOString().split("T")[0]);
+  }
+  return keys;
+}
+
+function DayMealPicker({ dateKey, dayDow, isToday, recipes, pantryNames, plan, onSave, onSaveToLibrary }) {
+  const dayBusy = isBusy(dayDow);
+  const meals = plan[dateKey] || [];
+  const [open, setOpen] = useState(false);
+  const [mode, setMode] = useState("pick"); // "pick" | "custom"
+  const [search, setSearch] = useState("");
+  const [customName, setCustomName] = useState("");
+  const [customEmoji, setCustomEmoji] = useState("🍽️");
+  const [savedToLib, setSavedToLib] = useState(false);
+
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase();
+    return recipes.filter(r => !q || r.title.toLowerCase().includes(q) || (r.tags||[]).some(t=>t.toLowerCase().includes(q)));
+  }, [recipes, search]);
+
+  const addRecipe = function(r) {
+    const entry = { id: uid(), title: r.title, emoji: r.emoji, time: r.time, custom: false };
+    onSave(dateKey, [...meals, entry]);
+    setOpen(false); setSearch("");
+  };
+  const addCustom = function() {
+    if (!customName.trim()) return;
+    const newId = uid();
+    const entry = { id: newId, title: customName.trim(), emoji: customEmoji, time: null, custom: true };
+    onSave(dateKey, [...meals, entry]);
+    // Also save to recipe library so it appears in search next time
+    if (onSaveToLibrary) {
+      onSaveToLibrary({
+        id: "custom_" + newId, title: customName.trim(), emoji: customEmoji,
+        cuisine: "chinese", time: 30, color: T.sage, tags: [], needs: [], optional: [],
+        steps: [], notes: "", favourites: [], fasterMethod: null, custom: true,
+      });
+    }
+    setSavedToLib(true);
+    setTimeout(function(){ setSavedToLib(false); }, 2000);
+    setCustomName(""); setOpen(false);
+  };
+  const removeMeal = function(mealId) {
+    onSave(dateKey, meals.filter(m => m.id !== mealId));
+  };
+
+  const dateDisplay = (function() {
+    const d = new Date(dateKey + "T00:00:00");
+    return `${d.getMonth()+1}/${d.getDate()}`;
+  })();
+
+  return (
+    <div className="rounded-3xl overflow-hidden" style={{ border:`2px solid ${isToday?T.honey:T.cream3}`, boxShadow:isToday?`0 4px 16px ${T.honey}33`:"none" }}>
+      {/* Day header */}
+      <div className="flex items-center justify-between px-4 py-2.5" style={{ background:dayBusy?T.honey3:T.cream2 }}>
+        <div className="flex items-center gap-2">
+          {isToday && <span className="text-xs font-black px-2.5 py-0.5 rounded-full text-white" style={{background:T.honey}}>今日</span>}
+          <span className="font-black text-sm" style={{color:T.text}}>週{DAYS_ZH[dayDow]}</span>
+          <span className="text-xs" style={{color:T.textFaint}}>{dateDisplay}</span>
+          {dayBusy && <span className="text-xs font-bold flex items-center gap-0.5" style={{color:T.terra}}><Zap size={10}/>忙碌日</span>}
+        </div>
+        <button type="button" onClick={function(){setOpen(v=>!v); setMode("pick"); setSearch(""); setCustomName("");}}
+          className="w-7 h-7 rounded-full flex items-center justify-center active:scale-95"
+          style={{ background:open?T.cream3:T.sage4, border:"1.5px solid "+(open?T.cream3:T.sage3) }}>
+          {open ? <X size={13} style={{color:T.textMid}} /> : <Plus size={13} style={{color:T.sage}} />}
+        </button>
+      </div>
+
+      {/* Saved meals */}
+      {meals.length > 0 && (
+        <div className="px-4 pt-2 pb-2 space-y-1.5" style={{background:T.cream}}>
+          {meals.map(function(m) {
+            return (
+              <div key={m.id} className="flex items-center gap-2.5 py-1.5 px-2 rounded-2xl" style={{background:T.cream2}}>
+                <span className="text-lg flex-shrink-0">{m.emoji}</span>
+                <div className="flex-1 min-w-0">
+                  <p className="font-black text-sm truncate" style={{color:T.text, fontFamily:"Georgia,serif"}}>{m.title}</p>
+                  {m.time && <p className="text-xs" style={{color:T.textFaint}}><Clock size={9}/> {m.time}分鐘</p>}
+                  {m.custom && <p className="text-xs font-bold" style={{color:T.sage}}>✨ 自訂</p>}
+                </div>
+                <button type="button" onClick={function(){removeMeal(m.id);}}
+                  className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0" style={{background:T.cream3}}>
+                  <X size={10} style={{color:T.textSoft}} />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {meals.length === 0 && !open && (
+        <div className="px-4 py-2.5 flex items-center gap-2" style={{background:T.cream}}>
+          <span className="text-lg">🍽️</span>
+          <p className="text-sm italic" style={{color:T.textFaint}}>未有安排 — 撳 + 加入</p>
+        </div>
+      )}
+
+      {/* Picker panel */}
+      {open && (
+        <div className="px-4 pb-4 pt-2" style={{background:T.cream, borderTop:"1.5px solid "+T.cream3}}>
+          {/* Mode tabs */}
+          <div className="flex gap-2 mb-3 p-1 rounded-xl" style={{background:T.cream3}}>
+            <button type="button" onClick={function(){setMode("pick");}}
+              className="flex-1 py-1.5 rounded-lg text-xs font-black"
+              style={mode==="pick" ? {background:T.cream, color:T.sage, boxShadow:"0 1px 4px #3D2B1F18"} : {color:T.textFaint}}>
+              📖 揀食譜
+            </button>
+            <button type="button" onClick={function(){setMode("custom");}}
+              className="flex-1 py-1.5 rounded-lg text-xs font-black"
+              style={mode==="custom" ? {background:T.cream, color:T.terra, boxShadow:"0 1px 4px #3D2B1F18"} : {color:T.textFaint}}>
+              ✏️ 自己輸入
+            </button>
+          </div>
+
+          {mode === "pick" && (
+            <div>
+              <input value={search} onChange={function(e){setSearch(e.target.value);}} placeholder="搜尋食譜…"
+                className="w-full px-3 py-2 rounded-xl border-2 text-sm outline-none mb-2"
+                style={{background:T.cream2, borderColor:T.cream3, color:T.text}} />
+              <div className="space-y-1.5 max-h-52 overflow-y-auto">
+                {filtered.slice(0,20).map(function(r) {
+                  const pct = r.needs.length ? Math.round((r.needs.filter(n=>pantryNames.includes(n)).length/r.needs.length)*100) : 100;
+                  return (
+                    <button key={r.id} type="button" onClick={function(){addRecipe(r);}}
+                      className="w-full flex items-center gap-2.5 px-3 py-2 rounded-2xl text-left active:scale-[0.98] border-2"
+                      style={{background:T.cream2, borderColor:T.cream3}}>
+                      <span className="text-xl flex-shrink-0">{r.emoji}</span>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-black text-xs truncate" style={{color:T.text}}>{r.title}</p>
+                        <p className="text-xs" style={{color:T.textFaint}}>{r.time}分鐘 · 食材{pct}%</p>
+                      </div>
+                      <Plus size={13} style={{color:T.sage, flexShrink:0}} />
+                    </button>
+                  );
+                })}
+                {filtered.length === 0 && <p className="text-xs text-center py-3" style={{color:T.textFaint}}>搵唔到 — 試下「自己輸入」</p>}
+              </div>
+            </div>
+          )}
+
+          {mode === "custom" && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <input value={customEmoji} onChange={function(e){setCustomEmoji(e.target.value);}} maxLength={4}
+                  className="w-14 text-center text-2xl px-1 py-2 rounded-xl border-2 outline-none"
+                  style={{background:T.cream2, borderColor:T.cream3}} />
+                <input value={customName} onChange={function(e){setCustomName(e.target.value);}} placeholder="輸入餸菜名稱，例如：火鍋、燒肉…"
+                  className="flex-1 px-3 py-2 rounded-xl border-2 text-sm outline-none"
+                  style={{background:T.cream2, borderColor:customName?T.sage:T.cream3, color:T.text}} />
+              </div>
+              <button type="button" onClick={addCustom} disabled={!customName.trim()}
+                className="w-full py-2.5 rounded-2xl font-black text-white text-sm flex items-center justify-center gap-2 active:scale-95 disabled:opacity-40"
+                style={{background:"linear-gradient(135deg,"+T.sage+","+T.sage2+")"}}>
+                <Check size={14} />加入今日餐單
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PlanTab({ recipes, items, customRecipes, setCustomRecipes }) {
   const dow = getDow();
-  const week = Array.from({length:7},(_,i) => (dow+i)%7);
-  const pantryNames = useMemo(() => items.filter(i=>i.section!=="leftover").map(i=>i.name), [items]);
+  const dateKeys = useMemo(getWeekDateKeys, []);
+  const pantryNames = useMemo(function() { return items.filter(function(i){return i.section!=="leftover";}).map(function(i){return i.name;}); }, [items]);
+  const [plan, setPlan] = usePersist("km_meal_plan", {});
+
+  const saveMeals = useCallback(function(dateKey, meals) {
+    setPlan(function(prev) {
+      const next = Object.assign({}, prev);
+      next[dateKey] = meals;
+      return next;
+    });
+  }, [setPlan]);
+
+  const saveToLibrary = useCallback(function(recipe) {
+    setCustomRecipes(function(prev) {
+      // Don't add duplicates by title
+      if (prev.some(function(r){ return r.title === recipe.title; })) return prev;
+      return [recipe].concat(prev);
+    });
+  }, [setCustomRecipes]);
+
+  // Defrost reminder: check frozen items needed tomorrow
+  const tomorrowKey = dateKeys[1];
+  const tomorrowMeals = plan[tomorrowKey] || [];
+  const tomorrowRecipes = recipes.filter(function(r){ return tomorrowMeals.some(function(m){return m.title===r.title;}); });
+  const defrostNeeded = useMemo(function() {
+    const frozen = items.filter(function(i){return i.section==="frozen";}).map(function(i){return i.name;});
+    const needed = [];
+    tomorrowRecipes.forEach(function(r){
+      (r.needs||[]).forEach(function(n){ if(frozen.includes(n) && !needed.includes(n)) needed.push(n); });
+    });
+    return needed;
+  }, [items, tomorrowRecipes]);
+
   return (
     <div>
       <h2 className="font-black text-xl mb-1" style={{ color:T.text, fontFamily:"Georgia,serif" }}>📅 本週餐單</h2>
-      <p className="text-xs mb-4" style={{ color:T.textSoft }}>忙碌日自動推薦快手食譜</p>
+      <p className="text-xs mb-3" style={{ color:T.textSoft }}>撳 <span className="font-black">+</span> 加餸菜 · 可揀食譜或自己輸入 · 自動儲存</p>
+
+      {defrostNeeded.length > 0 && (
+        <div className="mb-4 px-4 py-3 rounded-2xl flex items-start gap-2" style={{background:T.frozen3, border:"1.5px solid "+T.frozen}}>
+          <span className="text-lg flex-shrink-0">❄️</span>
+          <div>
+            <p className="font-black text-sm" style={{color:T.frozen}}>明日需要解凍</p>
+            <p className="text-xs mt-0.5" style={{color:T.textMid}}>{defrostNeeded.join("、")} — 今晚放入雪櫃解凍</p>
+          </div>
+        </div>
+      )}
+
       <div className="space-y-3">
-        {week.map((dayDow,idx) => {
-          const isToday = idx===0; const dayBusy = isBusy(dayDow);
-          const pool = [...recipes].filter(r=>dayBusy?r.time<=20:true).sort((a,b) => {
-            const pa=a.needs.filter(n=>pantryNames.includes(n)).length/Math.max(a.needs.length,1);
-            const pb=b.needs.filter(n=>pantryNames.includes(n)).length/Math.max(b.needs.length,1);
-            return pb-pa;
-          });
-          const pick = pool[idx%Math.max(pool.length,1)];
-          const pct = pick ? Math.round((pick.needs.filter(n=>pantryNames.includes(n)).length/Math.max(pick.needs.length,1))*100) : 0;
+        {dateKeys.map(function(dateKey, idx) {
+          const d = new Date(dateKey + "T00:00:00");
+          const dayDow = d.getDay();
           return (
-            <div key={dayDow} className="rounded-3xl overflow-hidden"
-              style={{ border:`2px solid ${isToday?T.honey:T.cream3}`, boxShadow:isToday?`0 4px 16px ${T.honey}33`:"none" }}>
-              <div className="flex items-center justify-between px-4 py-2.5" style={{ background:dayBusy?T.honey3:T.cream2 }}>
-                <div className="flex items-center gap-2">
-                  {isToday && <span className="text-xs font-black px-2.5 py-0.5 rounded-full text-white" style={{background:T.honey}}>今日</span>}
-                  <span className="font-black" style={{color:T.text}}>週{DAYS_ZH[dayDow]}</span>
-                  {dayBusy && <span className="text-xs font-bold flex items-center gap-0.5" style={{color:T.terra}}><Zap size={10}/>忙碌日</span>}
-                </div>
-                {dayBusy && <span className="text-xs" style={{color:T.textFaint}}>≤20分鐘</span>}
-              </div>
-              {pick && (
-                <div className="px-4 py-3 flex items-center gap-3" style={{ background:T.cream }}>
-                  <span className="text-2xl">{pick.emoji}</span>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-black text-sm truncate" style={{ color:T.text, fontFamily:"Georgia,serif" }}>
-                      {pick.title}{pick.fromSheet && <span className="ml-1 text-xs font-normal" style={{color:T.sky}}>📡</span>}
-                    </p>
-                    <p className="text-xs flex items-center gap-1 mt-0.5" style={{ color:T.textSoft }}>
-                      <Clock size={9}/>{pick.time}分鐘
-                      {pick.favourites?.length>0 && <span>· {pick.favourites.map(fid=>FAMILY.find(f=>f.id===fid)?.emoji).join("")}最愛</span>}
-                    </p>
-                  </div>
-                  <span className="text-xs font-black" style={{ color:pct===100?T.sage:T.honey }}>{pct}%</span>
-                </div>
-              )}
-            </div>
+            <DayMealPicker key={dateKey} dateKey={dateKey} dayDow={dayDow} isToday={idx===0}
+              recipes={recipes} pantryNames={pantryNames} plan={plan} onSave={saveMeals} onSaveToLibrary={saveToLibrary} />
           );
         })}
       </div>
@@ -1665,7 +1863,7 @@ function App() {
           <div className="fade-up" key={tab}>
             {tab==="storage" && <StorageTab items={items} setItems={setItems} customRecipes={customRecipes} setCustomRecipes={setCustomRecipes} />}
             {tab==="recipes" && <RecipesTab recipes={allRecipes} items={items} busyToday={busyToday} syncStatus={syncStatus} lastSync={lastSync} syncError={syncError} onRefresh={refresh} customRecipes={customRecipes} setCustomRecipes={setCustomRecipes} />}
-            {tab==="plan"    && <PlanTab recipes={allRecipes} items={items} />}
+            {tab==="plan"    && <PlanTab recipes={allRecipes} items={items} customRecipes={customRecipes} setCustomRecipes={setCustomRecipes} />}
             {tab==="ai"      && <AIVisionTab items={items} setItems={setItems} essentials={essentials} setEssentials={setEssentials} restockList={restockList} setRestockList={setRestockList} />}
           </div>
         </main>
