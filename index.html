@@ -182,7 +182,7 @@ async function callVisionAI(base64, mediaType, mode) {
   const isRestock = mode === "restock";
   const prompt = isRestock
     ? `You are analyzing a grocery or kitchen photo. Identify ALL visible food items. For each item decide which storage: fridge, frozen, or pantry. Reply with ONLY a valid JSON object, no markdown, no extra text: {"mode":"restock","items":[{"name":"雞蛋","nameEn":"Eggs","emoji":"🥚","section":"fridge","qty":6,"unit":"個","confidence":"high"}],"summary":"找到 N 件食材"}`
-    : `You are analyzing a photo of empty packaging or a fridge. Identify items that are EMPTY or USED UP. Reply with ONLY a valid JSON object, no markdown: {"mode":"usedup","items":[{"name":"牛奶","nameEn":"Milk","emoji":"🥛","section":"fridge","confidence":"high"}],"summary":"發現 N 件需補充"}`;
+    : `You are analyzing a photo of a fridge, freezer, or food packaging. Identify ALL items that are: (1) completely empty or used up, (2) nearly empty or running low (less than 25% remaining), (3) only one small piece left, or (4) packaging that looks like it will run out soon. Do NOT skip items just because there is some left — if it looks like it needs restocking soon, include it. Reply with ONLY a valid JSON object, no markdown: {"mode":"usedup","items":[{"name":"牛奶","nameEn":"Milk","emoji":"🥛","section":"fridge","confidence":"high","reason":"nearly empty"}],"summary":"發現 N 件需補充"}`;
   const body = {
     contents: [{ parts: [
       { inline_data: { mime_type: mediaType, data: base64 } },
@@ -225,7 +225,7 @@ async function callVisionAI(base64, mediaType, mode) {
 
 // ── GOOGLE SHEETS ──────────────────────────────────────────────────────────────
 const SHEET_ID  = "1r1ly3ojY624Vcuae-gumuGOTqBzsl2fbO4E7sfOUz2w";
-const PROXY_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=0`;
+const PROXY_URL = `https://kitchen-magic-ai.mktg201.workers.dev/sheets`;
 
 function parseCSVtoRecipes(text) {
   const lines = text.trim().split("\n").filter(Boolean);
@@ -666,17 +666,55 @@ function FoodItemRow({ item, onDelete, onMove }) {
 }
 
 
-function StorageTab({ items, setItems }) {
+function StorageTab({ items, setItems, customRecipes, setCustomRecipes }) {
   const [modalOpen, setModalOpen]       = useState(false);
   const [modalSection, setModalSection] = useState("fridge");
   const [active, setActive]             = useState("all");
   const [search, setSearch]             = useState("");
+  const [importMsg, setImportMsg]       = useState("");
+  const importRef = useRef(null);
   const openModal = (section="fridge") => { setModalSection(section); setModalOpen(true); };
   const deleteItem = useCallback(id => setItems(p => p.filter(i => i.id !== id)), [setItems]);
   const addItem    = useCallback(item => setItems(p => [item,...p]), [setItems]);
   const moveItem   = useCallback(function(id, newSection, newDate, newNotes) {
     setItems(function(p) { return p.map(function(i) { return i.id === id ? Object.assign({}, i, {section:newSection, dateAdded:newDate, notes:newNotes}) : i; }); });
   }, [setItems]);
+
+  const exportData = useCallback(function() {
+    const data = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      items: items,
+      customRecipes: customRecipes || [],
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `kitchen-magic-backup-${todayStr()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [items, customRecipes]);
+
+  const importData = useCallback(function(e) {
+    const file = e.target.files?.[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function(ev) {
+      try {
+        const data = JSON.parse(ev.target.result);
+        if (!data.items || !Array.isArray(data.items)) throw new Error("格式錯誤");
+        setItems(data.items);
+        if (data.customRecipes && Array.isArray(data.customRecipes)) setCustomRecipes(data.customRecipes);
+        setImportMsg("✅ 成功導入 " + data.items.length + " 項食材" + (data.customRecipes?.length ? " + " + data.customRecipes.length + " 個自訂食譜" : ""));
+        setTimeout(function(){ setImportMsg(""); }, 4000);
+      } catch(err) {
+        setImportMsg("❌ 導入失敗：" + err.message);
+        setTimeout(function(){ setImportMsg(""); }, 4000);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  }, [setItems, setCustomRecipes]);
   const alerts = useMemo(() => items.filter(i => { const s=SECTIONS.find(x=>x.id===i.section); return s&&daysDiff(i.dateAdded)>=s.alertDays; }), [items]);
   const warns  = useMemo(() => items.filter(i => { const s=SECTIONS.find(x=>x.id===i.section); const d=daysDiff(i.dateAdded); return s&&d>=Math.floor(s.alertDays*0.7)&&d<s.alertDays; }), [items]);
   const counts = useMemo(() => Object.fromEntries(SECTIONS.map(s => [s.id, items.filter(i => i.section===s.id).length])), [items]);
@@ -705,6 +743,25 @@ function StorageTab({ items, setItems }) {
           <Plus size={15} />加入食材
         </button>
       </div>
+      <div className="flex gap-2 mb-4">
+        <button type="button" onClick={exportData}
+          className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-black border-2 active:scale-95"
+          style={{ background:T.sky3, borderColor:T.sky+"55", color:T.sky }}>
+          <Icon name="download" size={11} />備份數據
+        </button>
+        <button type="button" onClick={function(){ importRef.current && importRef.current.click(); }}
+          className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-black border-2 active:scale-95"
+          style={{ background:T.sage4, borderColor:T.sage+"55", color:T.sage }}>
+          <Icon name="upload" size={11} />導入備份
+        </button>
+        <input ref={importRef} type="file" accept=".json" onChange={importData} style={{display:"none"}} />
+      </div>
+      {importMsg && (
+        <div className="mb-3 px-3 py-2.5 rounded-2xl text-xs font-bold text-center"
+          style={{ background:importMsg.startsWith("✅")?T.ok3:T.alert3, color:importMsg.startsWith("✅")?T.ok:T.alert, border:`1.5px solid ${importMsg.startsWith("✅")?T.sage3:T.alert2}` }}>
+          {importMsg}
+        </div>
+      )}
       {alerts.length>0 && (
         <div className="mb-4 rounded-2xl px-4 py-3 flex items-start gap-3" style={{ background:T.alert3, border:`2px solid ${T.alert2}` }}>
           <Bell size={17} style={{color:T.alert,flexShrink:0,marginTop:1}} />
@@ -1606,7 +1663,7 @@ function App() {
         {/* CONTENT */}
         <main className="px-4 pt-4 pb-28 safe-bottom">
           <div className="fade-up" key={tab}>
-            {tab==="storage" && <StorageTab items={items} setItems={setItems} />}
+            {tab==="storage" && <StorageTab items={items} setItems={setItems} customRecipes={customRecipes} setCustomRecipes={setCustomRecipes} />}
             {tab==="recipes" && <RecipesTab recipes={allRecipes} items={items} busyToday={busyToday} syncStatus={syncStatus} lastSync={lastSync} syncError={syncError} onRefresh={refresh} customRecipes={customRecipes} setCustomRecipes={setCustomRecipes} />}
             {tab==="plan"    && <PlanTab recipes={allRecipes} items={items} />}
             {tab==="ai"      && <AIVisionTab items={items} setItems={setItems} essentials={essentials} setEssentials={setEssentials} restockList={restockList} setRestockList={setRestockList} />}
