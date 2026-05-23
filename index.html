@@ -25,7 +25,7 @@
   select { -webkit-appearance: none; }
   .scrollbar-hide::-webkit-scrollbar { display: none; }
   .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
-  @keyframes fadeUp  { from { opacity:0; } to { opacity:1; } }
+  @keyframes fadeUp  { from { opacity:0; transform:translateY(12px) } to { opacity:1; transform:none } }
   @keyframes spin    { from { transform:rotate(0deg) } to { transform:rotate(360deg) } }
   @keyframes wobble  {
     0%,100% { transform: rotate(-3deg) scale(1.0) }
@@ -44,18 +44,6 @@
 
 <script type="text/babel">
 const { useState, useMemo, useEffect, useCallback, useRef } = React;
-const createPortal = ReactDOM.createPortal;
-
-// Portal wrapper — renders children directly into document.body
-// bypassing any parent stacking context (backdrop-filter, transform, etc.)
-function Modal({ children }) {
-  const el = useRef(document.createElement("div"));
-  useEffect(() => {
-    document.body.appendChild(el.current);
-    return () => document.body.removeChild(el.current);
-  }, []);
-  return createPortal(children, el.current);
-}
 
 // ── Lucide icon shim ──────────────────────────────────────────────────────────
 function Icon({ name, size = 16, color, style, className }) {
@@ -82,6 +70,7 @@ function Icon({ name, size = 16, color, style, className }) {
   }, [name, size, color]);
   return <span ref={ref} style={{ display:"inline-flex", alignItems:"center", ...style }} className={className} />;
 }
+// Convenience wrappers matching original import names
 const ChefHat      = p => <Icon name="chef-hat" {...p} />;
 const Search       = p => <Icon name="search" {...p} />;
 const Clock        = p => <Icon name="clock" {...p} />;
@@ -189,136 +178,58 @@ const DEFAULT_ESSENTIALS = [
 
 // ── AI VISION ──────────────────────────────────────────────────────────────────
 async function callVisionAI(base64, mediaType, mode) {
-  // Cloudflare Worker proxy → Gemini
-  // Pass model as query param so the Worker can use it if it supports ?model=
-  const BASE_URL = "https://kitchen-magic-ai.mktg201.workers.dev";
-  const MODEL    = "gemini-2.0-flash";   // fastest, highest rate limits
-  const API_URL  = BASE_URL + "?model=" + MODEL;
-
+  const API_URL = "https://kitchen-magic-ai.mktg201.workers.dev";
   const isRestock = mode === "restock";
   const prompt = isRestock
     ? `You are analyzing a grocery or kitchen photo. Identify ALL visible food items. For each item decide which storage: fridge, frozen, or pantry. Reply with ONLY a valid JSON object, no markdown, no extra text: {"mode":"restock","items":[{"name":"雞蛋","nameEn":"Eggs","emoji":"🥚","section":"fridge","qty":6,"unit":"個","confidence":"high"}],"summary":"找到 N 件食材"}`
     : `You are analyzing a photo of empty packaging or a fridge. Identify items that are EMPTY or USED UP. Reply with ONLY a valid JSON object, no markdown: {"mode":"usedup","items":[{"name":"牛奶","nameEn":"Milk","emoji":"🥛","section":"fridge","confidence":"high"}],"summary":"發現 N 件需補充"}`;
-
   const body = {
-    model: MODEL,   // include in body too in case Worker reads it from here
-    contents: [{
-      parts: [
-        { inline_data: { mime_type: mediaType, data: base64 } },
-        { text: prompt }
-      ]
-    }],
+    contents: [{ parts: [
+      { inline_data: { mime_type: mediaType, data: base64 } },
+      { text: prompt }
+    ]}],
     generationConfig: { temperature: 0.1, maxOutputTokens: 2048 }
   };
-
-  // Retry up to 3 times with backoff for 429 rate-limit errors
   const MAX_RETRIES = 3;
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     let res;
     try {
-      res = await fetch(API_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-    } catch(netErr) {
-      throw new Error("網絡連接失敗: " + netErr.message);
-    }
-
+      res = await fetch(API_URL, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body) });
+    } catch(netErr) { throw new Error("網絡連接失敗: " + netErr.message); }
     let rawText;
     try { rawText = await res.text(); } catch(e) { throw new Error("讀取回應失敗"); }
-
-    // 429 = rate limit → wait and retry
     if (res.status === 429) {
-      if (attempt < MAX_RETRIES) {
-        await new Promise(r => setTimeout(r, attempt * 3000)); // 3s, 6s
-        continue;
-      }
-      throw new Error("AI 配額暫時已滿 (429)。已自動重試 " + MAX_RETRIES + " 次。請等 30 秒後再掃描，或檢查 Cloudflare Worker 是否使用 gemini-2.0-flash 模型。");
+      if (attempt < MAX_RETRIES) { await new Promise(r => setTimeout(r, attempt * 3000)); continue; }
+      throw new Error("AI 配額暫時已滿 (429)。請等 30 秒後重試。");
     }
-
     if (!res.ok) throw new Error("API錯誤 " + res.status + ": " + rawText.slice(0, 200));
-
     let envelope;
-    try { envelope = JSON.parse(rawText); } catch(e) {
-      throw new Error("回應非JSON (" + rawText.length + " chars): " + rawText.slice(0, 200));
-    }
-
+    try { envelope = JSON.parse(rawText); } catch(e) { throw new Error("回應非JSON: " + rawText.slice(0, 200)); }
     if (envelope.error) {
       const msg = envelope.error.message || JSON.stringify(envelope.error);
-      const isQuota = msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED") || msg.includes("quota");
-      if (isQuota && attempt < MAX_RETRIES) {
-        await new Promise(r => setTimeout(r, attempt * 3000));
-        continue;
+      if ((msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED")) && attempt < MAX_RETRIES) {
+        await new Promise(r => setTimeout(r, attempt * 3000)); continue;
       }
-      if (isQuota) throw new Error("AI 配額已滿。請等 30 秒後重試。建議更新 Worker 使用 gemini-2.0-flash 模型。");
       throw new Error("Gemini錯誤: " + msg);
     }
-
     const text = envelope && envelope.candidates && envelope.candidates[0] &&
       envelope.candidates[0].content && envelope.candidates[0].content.parts &&
       envelope.candidates[0].content.parts[0] && envelope.candidates[0].content.parts[0].text;
-    if (!text) throw new Error("AI無回應 — 回應內容: " + rawText.slice(0, 200));
-
+    if (!text) throw new Error("AI無回應: " + rawText.slice(0, 200));
     const start = text.indexOf("{"); const end = text.lastIndexOf("}");
     if (start === -1 || end === -1) throw new Error("AI回應格式錯誤: " + text.slice(0, 100));
-
     try { return JSON.parse(text.slice(start, end + 1)); }
     catch(e) { throw new Error("JSON解析失敗: " + text.slice(0, 100)); }
   }
 }
 
 // ── GOOGLE SHEETS ──────────────────────────────────────────────────────────────
-// ✅ FIX 1: 改用 gviz endpoint（更穩定，已測試可下載）
 const SHEET_ID  = "1r1ly3ojY624Vcuae-gumuGOTqBzsl2fbO4E7sfOUz2w";
-const SHEET_URL = "https://kitchen-magic-ai.mktg201.workers.dev/sheets";
-
-// ✅ FIX 2: 改善 ingredients 清洗邏輯
-// 你的 Sheet E 欄格式例子：
-//   "* 雞肉：去骨雞腿肉 3-4 件\n* 辛香料：蔥片 5-10 片"
-//   "材料：\n糯米粉70克\n粟粉兩茶匙"
-// 目標：提取乾淨的食材主名，例如 ["雞肉","辛香料","糯米粉","粟粉"]
-function cleanIngredients(raw) {
-  if (!raw) return [];
-
-  return raw
-    // 先按換行、頓號、逗號分割
-    .split(/[\n、,，\/]/)
-    .map(line => {
-      let s = line.trim();
-      // 移除 * 、 # 、 - 、 • 開頭的符號
-      s = s.replace(/^[\*\-\•\#]+\s*/, "");
-      // 移除 「材料：」「調味料：」等 label 行
-      if (/^(材料|調味料|調味|醃料|配菜|食材|辛香料|液體|做法|步驟|備注|備註)\s*[：:]\s*$/.test(s)) return null;
-      // 如果有「主類：具體食材」格式，取冒號前面的主類名
-      // 例如「辛香料：蔥片 5-10 片」→「辛香料」
-      // 例如「雞肉：去骨雞腿肉 3-4 件」→「雞肉」
-      if (/：|:/.test(s)) {
-        const [key] = s.split(/：|:/);
-        s = key.trim();
-      }
-      // 移除數量、單位、英文括號補充說明
-      // 例如「糯米粉70克」→「糯米粉」；「花生3-4湯匙」→「花生」
-      s = s.replace(/[\d\.]+\s*(克|公克|公斤|毫升|公升|ml|g|kg|湯匙|茶匙|杯|片|條|個|隻|件|份|包|罐|樽|袋|盒|碗).*/i, "").trim();
-      // 移除括號說明 e.g. （可省略）
-      s = s.replace(/[（(][^）)]*[）)]/g, "").trim();
-      // 移除「適量」「少許」「各適量」結尾
-      s = s.replace(/\s*(適量|少許|各適量|若干)$/, "").trim();
-      // 移除英文 label 開頭 e.g. "* The Base: ..."
-      if (/^(the|a|an)\s/i.test(s)) return null;
-      // 過濾空字串或太短（1字）或純數字
-      if (!s || s.length < 2 || /^\d+$/.test(s)) return null;
-      return s;
-    })
-    .filter(Boolean)
-    // 去重
-    .filter((v, i, arr) => arr.indexOf(v) === i);
-}
+const PROXY_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=0`;
 
 function parseCSVtoRecipes(text) {
   const lines = text.trim().split("\n").filter(Boolean);
   if (lines.length < 2) return [];
-
   const parseLine = (line) => {
     const cols = []; let cur = "", inQ = false;
     for (let i = 0; i < line.length; i++) {
@@ -329,34 +240,20 @@ function parseCSVtoRecipes(text) {
     }
     cols.push(cur.trim()); return cols;
   };
-
-  const headers = parseLine(lines[0]).map(h => h.toLowerCase().replace(/[\s"']/g, "").trim());
-  // Debug: log headers to console
-  console.log("KM headers:", headers);
-  const colIdx = (candidates) => {
-    for (const c of candidates) {
-      const i = headers.findIndex(h => h.includes(c));
-      if (i !== -1) return i;
-    }
-    return -1;
-  };
-
+  const headers = parseLine(lines[0]).map(h => h.toLowerCase().replace(/\s/g,""));
+  const colIdx = (candidates) => { for (const c of candidates) { const i = headers.findIndex(h => h.includes(c)); if (i !== -1) return i; } return -1; };
   const COL = {
-    name:           1,  // recipename
-    mainIngredients:4,  // mainingredients
-    ingredients:    5,  // ingredients
-    tags:           -1, // no tags column
-    time:           7,  // timings
-    emoji:          -1, // no emoji column
-    notes:          -1, // no notes column
-    steps:          6,  // cookingsteps
-    cuisine:        3,  // whatkindofcuisine
-    favourites:     2,  // who'sfavourite
-    video:          8,  // videolinkreference
+    name:       colIdx(["名稱","食譜名","recipe","name","title","標題"]),
+    ingredients:colIdx(["食材","材料","ingredient","ingredients"]),
+    tags:       colIdx(["標籤","分類","tag","tags","type","類型","cuisine"]),
+    time:       colIdx(["時間","烹飪時間","分鐘","minutes","time","min"]),
+    emoji:      colIdx(["emoji","表情","icon"]),
+    notes:      colIdx(["備注","備註","notes","note","tips","提示"]),
+    steps:      colIdx(["步驟","做法","steps","instructions"]),
+    cuisine:    colIdx(["菜系","cuisine","style"]),
+    favourites: colIdx(["喜歡","最愛","favourite","favorites","family"]),
   };
-
-  const getCol = (cols, idx) => idx !== -1 ? (cols[idx] || "").replace(/^"|"$/g, "").trim() : "";
-
+  const getCol = (cols, idx) => idx !== -1 ? (cols[idx] || "").replace(/^"|"$/g,"").trim() : "";
   const tagToCuisine = (rawTags, rawCuisine) => {
     const combined = (rawTags + " " + rawCuisine).toLowerCase();
     if (combined.includes("日") || combined.includes("japan"))   return "japanese";
@@ -366,99 +263,53 @@ function parseCSVtoRecipes(text) {
     if (combined.includes("甜") || combined.includes("dessert") || combined.includes("cake"))   return "dessert";
     return "chinese";
   };
-
   const recipes = [];
   lines.slice(1).forEach((line, idx) => {
     const cols = parseLine(line);
-    const name = getCol(cols, COL.name);
-    if (!name) return;
-
-    const rawMainIng = getCol(cols, COL.mainIngredients);
-    const rawIng     = getCol(cols, COL.ingredients);
-    const rawTags    = getCol(cols, COL.tags);
-    const rawTime    = getCol(cols, COL.time);
+    const name = getCol(cols, COL.name); if (!name) return;
+    const rawIng = getCol(cols, COL.ingredients);
+    const rawTags = getCol(cols, COL.tags);
+    const rawTime = getCol(cols, COL.time);
     const rawCuisine = getCol(cols, COL.cuisine);
-    const rawSteps   = getCol(cols, COL.steps);
-    const rawFav     = getCol(cols, COL.favourites).toLowerCase();
-
-    // ✅ Main Ingredients 欄：換行已被 Worker 轉成 |
-    const ingredients = rawMainIng
-      ? rawMainIng.split(/[|\n]/).map(s => s.trim()).filter(s => s.length >= 1)
-      : cleanIngredients(rawIng);
-
-    // ✅ ingredientsFull：Col 5 原文，只拆行，不做任何解析
-    const ingredientsFull = rawIng
-      ? rawIng.split(/\|/).map(s => s.trim()).filter(Boolean)
-      : [];
-
+    const ingredients = rawIng ? rawIng.split(/[、,，\n\/]/).map(s => s.trim()).filter(Boolean) : [];
     const tags = rawTags ? rawTags.split(/[、,，\n]/).map(s => s.trim()).filter(Boolean) : [];
     const time = parseInt(rawTime) || 30;
     const emoji = getCol(cols, COL.emoji) || "🍽️";
     const notes = getCol(cols, COL.notes);
-    const steps = rawSteps ? rawSteps.split(/[|\n。]/).map(s => s.trim()).filter(Boolean) : [];
-    const video = getCol(cols, COL.video);
-
-    const favourites = FAMILY.filter(f =>
-      rawFav.includes(f.label.toLowerCase()) || rawFav.includes(f.id)
-    ).map(f => f.id);
-
+    const rawSteps = getCol(cols, COL.steps);
+    const steps = rawSteps ? rawSteps.split(/[。\n]/).map(s => s.trim()).filter(Boolean) : [];
+    const rawFav = getCol(cols, COL.favourites).toLowerCase();
+    const favourites = FAMILY.filter(f => rawFav.includes(f.label.toLowerCase()) || rawFav.includes(f.id)).map(f => f.id);
     const cuisine = tagToCuisine(rawTags, rawCuisine);
     const palette = [T.honey, T.peach, T.sage, T.terra2, T.sky, T.rose, T.sage2, T.honey2];
-    const color   = palette[idx % palette.length];
-
-    recipes.push({
-      id: `sheet_${idx + 1}`,
-      title: name,
-      emoji,
-      cuisine,
-      time,
-      color,
-      tags,
-      needs: ingredients,
-      ingredientsFull,
-      optional: [],
-      steps,
-      notes,
-      favourites,
-      video,
-      fasterMethod: null,
-      fromSheet: true,
-    });
+    const color = palette[idx % palette.length];
+    recipes.push({ id:`sheet_${idx+1}`, title:name, emoji, cuisine, time, color, tags, needs:ingredients, optional:[], steps, notes, favourites, fasterMethod:null, fromSheet:true });
   });
-
   return recipes;
 }
 
 function useSheetRecipes() {
   const [sheetRecipes, setSheetRecipes] = useState([]);
-  const [status, setStatus]             = useState("idle");
-  const [lastSync, setLastSync]         = useState(null);
-  const [errorMsg, setErrorMsg]         = useState("");
+  const [status, setStatus] = useState("idle");
+  const [lastSync, setLastSync] = useState(null);
+  const [errorMsg, setErrorMsg] = useState("");
   const abortRef = useRef(null);
-
   const fetchRecipes = useCallback(async () => {
     if (abortRef.current) abortRef.current.abort();
     abortRef.current = new AbortController();
     setStatus("loading"); setErrorMsg("");
     try {
-      const res = await fetch(SHEET_URL, { signal: abortRef.current.signal, cache: "no-store" });
+      const res = await fetch(PROXY_URL, { signal: abortRef.current.signal, cache:"no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const text = await res.text();
       setSheetRecipes(parseCSVtoRecipes(text));
-      setStatus("success");
-      setLastSync(new Date());
+      setStatus("success"); setLastSync(new Date());
     } catch(err) {
       if (err.name === "AbortError") return;
-      setStatus("error");
-      setErrorMsg(err.message || "無法連接 Google Sheets");
+      setStatus("error"); setErrorMsg(err.message || "無法連接 Google Sheets");
     }
   }, []);
-
-  useEffect(() => {
-    fetchRecipes();
-    return () => abortRef.current?.abort();
-  }, [fetchRecipes]);
-
+  useEffect(() => { fetchRecipes(); return () => abortRef.current?.abort(); }, [fetchRecipes]);
   return { sheetRecipes, status, lastSync, errorMsg, refresh: fetchRecipes };
 }
 
@@ -467,19 +318,36 @@ const getDow   = () => new Date().getDay();
 const isBusy   = d => BUSY_DAYS.includes(d);
 const uid      = () => `${Date.now()}_${Math.floor(Math.random()*99999)}`;
 const todayStr = () => new Date().toISOString().split("T")[0];
+
+function usePersist(key, init) {
+  const [val, setVal] = useState(function() {
+    try {
+      var saved = localStorage.getItem(key);
+      return saved !== null ? JSON.parse(saved) : (typeof init === "function" ? init() : init);
+    } catch(e) { return typeof init === "function" ? init() : init; }
+  });
+  var setAndSave = useCallback(function(update) {
+    setVal(function(prev) {
+      var next = typeof update === "function" ? update(prev) : update;
+      try { localStorage.setItem(key, JSON.stringify(next)); } catch(e) {}
+      return next;
+    });
+  }, [key]);
+  return [val, setAndSave];
+}
 const daysDiff = dateStr => { if (!dateStr) return 0; return Math.floor((Date.now() - new Date(dateStr).getTime()) / 86400000); };
 const freshBadge = (days, alertDays) => {
-  if (days <= 0)                          return { text:"今日",        color:T.ok,    bg:T.ok3   };
-  if (days === 1)                         return { text:"1日前",       color:T.ok,    bg:T.ok3   };
-  if (days < Math.floor(alertDays*0.7))  return { text:`${days}日前`, color:T.ok,    bg:T.ok3   };
-  if (days < alertDays)                   return { text:`${days}日前`, color:T.warn,  bg:T.warn3 };
-  return                                         { text:`${days}日 ⚠️`,color:T.alert, bg:T.alert3};
+  if (days <= 0)                         return { text:"今日",        color:T.ok,    bg:T.ok3   };
+  if (days === 1)                        return { text:"1日前",       color:T.ok,    bg:T.ok3   };
+  if (days < Math.floor(alertDays*0.7)) return { text:`${days}日前`, color:T.ok,    bg:T.ok3   };
+  if (days < alertDays)                  return { text:`${days}日前`, color:T.warn,  bg:T.warn3 };
+  return                                        { text:`${days}日 ⚠️`,color:T.alert, bg:T.alert3};
 };
 
 // ── INIT ITEMS ─────────────────────────────────────────────────────────────────
 const mk = (id,name,emoji,section,dateAdded,qty,unit,notes="") =>
   ({id:`init_${id}`,name,emoji,section,dateAdded,qty,unit,notes});
-const INIT_ITEMS = [];  // 清空示範食物 — 請自行輸入真實庫存
+const INIT_ITEMS = [];
 
 const LOCAL_RECIPES = [
   { id:1, title:"日式蔥燒雞",   emoji:"🍗", cuisine:"japanese", time:15, color:T.honey,
@@ -597,10 +465,9 @@ function AddItemModal({ defaultSection, onAdd, onClose }) {
   const pickQuick = ({n,e}) => { setName(n); setEmoji(e); setEmojiTab(false); };
   const submit = () => { if (!name.trim()) return; onAdd({id:uid(),name:name.trim(),emoji,section,qty:Number(qty),unit,dateAdded:dateStr,notes}); onClose(); };
   return (
-    <Modal>
-    <div onMouseDown={e => e.target===e.currentTarget && onClose()} style={{ position:"fixed", top:0, left:0, right:0, bottom:0, zIndex:9999, background:"#3D2B1F88", display:"flex", alignItems:"flex-end", justifyContent:"center" }}>
-
-      <div style={{ background:T.cream, position:"relative", zIndex:10000, width:"100%", maxWidth:"640px", borderRadius:"24px 24px 0 0", maxHeight:"92vh", overflowY:"auto", display:"flex", flexDirection:"column", boxShadow:"0 -8px 40px #3D2B1F33" }}>
+    <div className="fixed inset-0 z-50 flex items-end justify-center" style={{ background:"#3D2B1F88" }}
+      onMouseDown={e => e.target===e.currentTarget && onClose()}>
+      <div className="w-full rounded-t-3xl shadow-2xl overflow-hidden" style={{ background:T.cream, maxHeight:"92vh", display:"flex", flexDirection:"column" }}>
         <div className="flex-shrink-0 px-5 pt-5 pb-3 flex items-center justify-between" style={{ borderBottom:`1.5px solid ${T.cream3}` }}>
           <div className="flex items-center gap-2">
             <span className="text-2xl">{sec.emoji}</span>
@@ -718,32 +585,28 @@ function AddItemModal({ defaultSection, onAdd, onClose }) {
         </div>
       </div>
     </div>
-    </Modal>
   );
 }
 
 // ── FOOD ITEM ROW ──────────────────────────────────────────────────────────────
 function FoodItemRow({ item, onDelete, onMove }) {
-  const sec = SECTIONS.find(s => s.id === item.section);
-  const days = daysDiff(item.dateAdded);
-  const badge = freshBadge(days, sec.alertDays);
-  const isAlert = days >= sec.alertDays;
-  const isWarn  = !isAlert && days >= Math.floor(sec.alertDays * 0.7);
-  const [mode, setMode] = useState("idle"); // idle | move | delete
-  // Sections you can move TO (exclude current)
-  const moveTargets = SECTIONS.filter(s => s.id !== item.section);
-  const handleMove = (targetId) => {
-    const isDefrost = item.section === "frozen" && targetId === "fridge";
-    const newDate = (isDefrost || item.section === "frozen") ? todayStr() : item.dateAdded;
-    const newNotes = isDefrost
-      ? (item.notes ? item.notes + " · 已解凍" : "已解凍")
-      : item.notes;
+  var sec = SECTIONS.find(function(s) { return s.id === item.section; });
+  var days = daysDiff(item.dateAdded);
+  var badge = freshBadge(days, sec.alertDays);
+  var isAlert = days >= sec.alertDays;
+  var isWarn  = !isAlert && days >= Math.floor(sec.alertDays * 0.7);
+  var [mode, setMode] = useState("idle");
+  var moveTargets = SECTIONS.filter(function(s) { return s.id !== item.section; });
+  var handleMove = function(targetId) {
+    var isDefrost = item.section === "frozen" && targetId === "fridge";
+    var newDate  = isDefrost ? todayStr() : item.dateAdded;
+    var newNotes = isDefrost ? (item.notes ? item.notes + " · 已解凍" : "已解凍") : item.notes;
     onMove(item.id, targetId, newDate, newNotes);
     setMode("idle");
   };
   return (
     <div className="rounded-2xl overflow-hidden"
-      style={{ background:isAlert?T.alert3:isWarn?T.warn3:T.cream2, border:`1.5px solid ${isAlert?T.alert2:isWarn?T.warn2:T.cream3}` }}>
+      style={{ background:isAlert?T.alert3:isWarn?T.warn3:T.cream2, border:"1.5px solid "+(isAlert?T.alert2:isWarn?T.warn2:T.cream3) }}>
       <div className="flex items-center gap-3 px-3.5 py-3">
         <span className="text-2xl flex-shrink-0">{isAlert?"⚠️":item.emoji}</span>
         <div className="flex-1 min-w-0">
@@ -756,49 +619,43 @@ function FoodItemRow({ item, onDelete, onMove }) {
             {item.notes && <span className="text-xs italic truncate" style={{ color:T.textSoft, maxWidth:100 }}>{item.notes}</span>}
           </div>
         </div>
-        {/* Action buttons — idle state */}
         {mode === "idle" && (
           <div className="flex items-center gap-1 flex-shrink-0">
-            <button type="button" onClick={() => setMode("move")}
-              className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background:T.sky3 }}
-              title="移動至其他位置">
+            <button type="button" onClick={function(){setMode("move");}}
+              className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background:T.sky3 }}>
               <Icon name="arrow-right-left" size={12} style={{color:T.sky}} />
             </button>
-            <button type="button" onClick={() => setMode("delete")}
+            <button type="button" onClick={function(){setMode("delete");}}
               className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background:T.cream3 }}>
               <Trash2 size={12} style={{color:T.textSoft}} />
             </button>
           </div>
         )}
-        {/* Delete confirm */}
         {mode === "delete" && (
           <div className="flex items-center gap-1 flex-shrink-0">
-            <button type="button" onClick={() => onDelete(item.id)}
+            <button type="button" onClick={function(){onDelete(item.id);}}
               className="text-xs px-2.5 py-1.5 rounded-xl font-black text-white" style={{ background:T.alert }}>刪除</button>
-            <button type="button" onClick={() => setMode("idle")}
+            <button type="button" onClick={function(){setMode("idle");}}
               className="text-xs px-2.5 py-1.5 rounded-xl font-bold" style={{ background:T.cream3, color:T.textMid }}>取消</button>
           </div>
         )}
-        {/* Move — show X to cancel */}
         {mode === "move" && (
-          <button type="button" onClick={() => setMode("idle")}
+          <button type="button" onClick={function(){setMode("idle");}}
             className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0" style={{ background:T.cream3 }}>
             <X size={12} style={{color:T.textMid}} />
           </button>
         )}
       </div>
-      {/* Move target picker — expands below */}
       {mode === "move" && (
         <div className="px-3.5 pb-3 flex flex-wrap gap-2">
           <p className="w-full text-xs font-black mb-1" style={{color:T.textSoft}}>移動至：</p>
-          {moveTargets.map(t => {
-            const isDefrost = item.section === "frozen" && t.id === "fridge";
+          {moveTargets.map(function(t) {
+            var isDefrost = item.section === "frozen" && t.id === "fridge";
             return (
-              <button key={t.id} type="button" onClick={() => handleMove(t.id)}
+              <button key={t.id} type="button" onClick={function(){handleMove(t.id);}}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-black border-2 active:scale-95"
                 style={{ background:t.bg, borderColor:t.color, color:t.color }}>
-                {t.emoji} {t.label}
-                {isDefrost && <span style={{color:T.frozen}}>· 日期重設今日 ❄️→🧊</span>}
+                {t.emoji} {t.label}{isDefrost && " · ❄️ 日期重設今日"}
               </button>
             );
           })}
@@ -808,7 +665,7 @@ function FoodItemRow({ item, onDelete, onMove }) {
   );
 }
 
-// ── STORAGE TAB ────────────────────────────────────────────────────────────────
+
 function StorageTab({ items, setItems }) {
   const [modalOpen, setModalOpen]       = useState(false);
   const [modalSection, setModalSection] = useState("fridge");
@@ -817,8 +674,8 @@ function StorageTab({ items, setItems }) {
   const openModal = (section="fridge") => { setModalSection(section); setModalOpen(true); };
   const deleteItem = useCallback(id => setItems(p => p.filter(i => i.id !== id)), [setItems]);
   const addItem    = useCallback(item => setItems(p => [item,...p]), [setItems]);
-  const moveItem   = useCallback((id, newSection, newDate, newNotes) => {
-    setItems(p => p.map(i => i.id === id ? {...i, section:newSection, dateAdded:newDate, notes:newNotes} : i));
+  const moveItem   = useCallback(function(id, newSection, newDate, newNotes) {
+    setItems(function(p) { return p.map(function(i) { return i.id === id ? Object.assign({}, i, {section:newSection, dateAdded:newDate, notes:newNotes}) : i; }); });
   }, [setItems]);
   const alerts = useMemo(() => items.filter(i => { const s=SECTIONS.find(x=>x.id===i.section); return s&&daysDiff(i.dateAdded)>=s.alertDays; }), [items]);
   const warns  = useMemo(() => items.filter(i => { const s=SECTIONS.find(x=>x.id===i.section); const d=daysDiff(i.dateAdded); return s&&d>=Math.floor(s.alertDays*0.7)&&d<s.alertDays; }), [items]);
@@ -974,10 +831,9 @@ function RecipeViewModal({ recipe, pantryNames, onClose }) {
   const missing = recipe.needs.filter(n => !pantryNames.includes(n));
   useEffect(() => { document.body.style.overflow = "hidden"; return () => { document.body.style.overflow = ""; }; }, []);
   return (
-    <Modal>
-    <div onMouseDown={e => e.target===e.currentTarget && onClose()} style={{ position:"fixed", top:0, left:0, right:0, bottom:0, zIndex:9999, background:"#3D2B1F99", display:"flex", alignItems:"flex-end", justifyContent:"center" }}>
-
-      <div style={{ background:T.cream, position:"relative", zIndex:10000, width:"100%", maxWidth:"640px", borderRadius:"24px 24px 0 0", maxHeight:"92vh", overflowY:"auto", boxShadow:"0 -8px 40px #3D2B1F33" }}>
+    <div className="fixed inset-0 z-50 flex items-end justify-center" style={{ background:"#3D2B1F99" }}
+      onMouseDown={e => e.target===e.currentTarget && onClose()}>
+      <div className="w-full rounded-t-3xl max-h-[92vh] overflow-y-auto shadow-2xl" style={{ background:T.cream }}>
         <div className="relative h-44 flex items-center justify-center rounded-t-3xl"
           style={{ background:`linear-gradient(135deg,${recipe.color}dd,${recipe.color}77)` }}>
           <span className="text-8xl drop-shadow-lg">{recipe.emoji}</span>
@@ -1032,14 +888,6 @@ function RecipeViewModal({ recipe, pantryNames, onClose }) {
               💡 <span style={{ color:T.textMid }}>{recipe.notes}</span>
             </div>
           )}
-          {/* ✅ NEW: Video link if available */}
-          {recipe.video && (
-            <a href={recipe.video} target="_blank" rel="noopener noreferrer"
-              className="mb-4 flex items-center gap-2 px-3 py-2.5 rounded-2xl text-sm font-bold active:scale-95"
-              style={{ background:T.sky3, border:`1.5px solid ${T.sky}`, color:T.sky, display:"flex" }}>
-              <span>🎬</span> 觀看示範影片
-            </a>
-          )}
           <div className="flex gap-2 mb-4 p-1 rounded-2xl" style={{ background:T.cream3 }}>
             {[["ingredients","食材"],["steps","步驟"]].map(([id,label]) => (
               <button key={id} onClick={() => setTab(id)}
@@ -1048,80 +896,28 @@ function RecipeViewModal({ recipe, pantryNames, onClose }) {
             ))}
           </div>
           {tab==="ingredients" && (
-            <div className="space-y-5">
-
-              {/* ── Section 1: 食材配對（Col 4）── */}
-              {recipe.needs.length > 0 && (
-                <div>
-                  <p className="text-xs font-black uppercase tracking-widest mb-2"
-                    style={{ color:T.textFaint }}>食材配對</p>
-                  <div className="space-y-1">
-                    {recipe.needs.map((n,i) => (
-                      <div key={i} className="flex items-center gap-3 px-3 py-2.5 rounded-xl"
-                        style={{ background: pantryNames.includes(n) ? T.sage4 : T.cream2 }}>
-                        <div className="w-2 h-2 rounded-full flex-shrink-0"
-                          style={{ background: pantryNames.includes(n) ? T.sage : T.cream3 }} />
-                        <span className="flex-1 text-sm font-semibold" style={{ color:T.text }}>{n}</span>
-                        {pantryNames.includes(n)
-                          ? <Check size={14} style={{color:T.sage}} />
-                          : <span className="text-xs font-bold" style={{color:T.peach}}>欠缺</span>}
-                      </div>
-                    ))}
-                  </div>
+            <div>
+              {recipe.needs.map((n,i) => (
+                <div key={i} className="flex items-center gap-3 py-2.5 border-b last:border-0" style={{ borderColor:T.cream3 }}>
+                  <span className="flex-1 text-sm font-semibold" style={{ color:T.text }}>{n}</span>
+                  {pantryNames.includes(n) ? <Check size={14} style={{color:T.sage}} /> : <span className="text-xs font-bold" style={{color:T.peach}}>欠缺</span>}
                 </div>
-              )}
-
-              {/* ── Section 2: 材料份量（Col 5）── */}
-              {recipe.ingredientsFull?.length > 0 && (
-                <div>
-                  <p className="text-xs font-black uppercase tracking-widest mb-2"
-                    style={{ color:T.textFaint }}>材料份量</p>
-                  <div className="space-y-1">
-                    {recipe.ingredientsFull.map((line, i) => {
-                      const isHeader =
-                        /[：:]\s*$/.test(line) ||
-                        /^(醃料|醬汁|調味料|液體|花生餡|配菜|材料|seasonings?|sauce|marinate)\s*$/i.test(line);
-                      if (isHeader) {
-                        return (
-                          <p key={i} className="text-xs font-black pt-3 pb-1 first:pt-0"
-                            style={{ color:T.textSoft, borderBottom:`1px solid ${T.cream3}` }}>
-                            {line.replace(/[：:]\s*$/, "")}
-                          </p>
-                        );
-                      }
-                      return (
-                        <div key={i} className="px-3 py-2 rounded-xl text-sm"
-                          style={{ background:T.cream2, color:T.text, lineHeight:"1.5" }}>
-                          {line}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {recipe.needs.length === 0 && !recipe.ingredientsFull?.length && (
-                <p className="text-sm text-center py-4" style={{ color:T.textFaint }}>食材資料從 Sheets 讀取中…</p>
-              )}
-
+              ))}
               {recipe.optional?.length>0 && (
-                <div>
-                  <p className="text-xs font-black uppercase tracking-widest mb-2" style={{ color:T.textFaint }}>可選食材</p>
+                <>
+                  <p className="text-xs font-black uppercase tracking-widest mt-4 mb-2" style={{ color:T.textFaint }}>可選食材</p>
                   {recipe.optional.map((n,i) => (
                     <div key={i} className="flex items-center gap-3 py-2 opacity-60">
                       <span className="flex-1 text-sm" style={{ color:T.textMid }}>{n} <span style={{color:T.textFaint}}>（可選）</span></span>
                       {pantryNames.includes(n) && <Check size={13} style={{color:T.sage2}} />}
                     </div>
                   ))}
-                </div>
+                </>
               )}
             </div>
           )}
           {tab==="steps" && (
             <ol className="space-y-3">
-              {recipe.steps.length === 0 && (
-                <p className="text-sm text-center py-4" style={{ color:T.textFaint }}>步驟資料從 Sheets 讀取中…</p>
-              )}
               {recipe.steps.map((step,i) => {
                 const isDone = done.includes(i);
                 return (
@@ -1140,17 +936,30 @@ function RecipeViewModal({ recipe, pantryNames, onClose }) {
         </div>
       </div>
     </div>
-    </Modal>
   );
 }
-function RecipesTab({ recipes, items, busyToday, syncStatus, lastSync, syncError, onRefresh }) {
+
+// ── RECIPES TAB ────────────────────────────────────────────────────────────────
+function RecipesTab({ recipes, items, busyToday, syncStatus, lastSync, syncError, onRefresh, customRecipes, setCustomRecipes }) {
   const [search, setSearch]       = useState("");
   const [cuisine, setCuisine]     = useState("all");
   const [favFilter, setFav]       = useState(null);
   const [matchOnly, setMatch]     = useState(false);
-  const [busyOnly, setBusy]       = useState(false);
-  const [sheetOnly, setSheetOnly] = useState(false);
-  const [viewing, setViewing]     = useState(null);
+  const [busyOnly, setBusy]       = useState(busyToday);
+  const [sheetOnly, setSheetOnly]   = useState(false);
+  const [customOnly, setCustomOnly] = useState(false);
+  const [viewing, setViewing]       = useState(null);
+  const [addingCustom, setAddingCustom]   = useState(false);
+  const [editingCustom, setEditingCustom] = useState(null);
+  var saveCustomRecipe = function(recipe) {
+    setCustomRecipes(function(prev) {
+      var exists = prev.find(function(r){return r.id===recipe.id;});
+      return exists ? prev.map(function(r){return r.id===recipe.id?recipe:r;}) : [recipe].concat(prev);
+    });
+  };
+  var deleteCustomRecipe = function(id) {
+    setCustomRecipes(function(prev){return prev.filter(function(r){return r.id!==id;});});
+  };
   const pantryNames = useMemo(() => items.filter(i=>i.section!=="leftover").map(i=>i.name), [items]);
   const filtered = useMemo(() => recipes.filter(r => {
     const m = r.needs.filter(n=>pantryNames.includes(n)).length;
@@ -1158,6 +967,7 @@ function RecipesTab({ recipes, items, busyToday, syncStatus, lastSync, syncError
     if (matchOnly  && pct<100) return false;
     if (busyOnly   && r.time>20) return false;
     if (sheetOnly  && !r.fromSheet) return false;
+    if (customOnly && !r.custom)     return false;
     if (cuisine!=="all" && r.cuisine!==cuisine) return false;
     if (favFilter  && !r.favourites?.includes(favFilter)) return false;
     if (search) { const q=search.toLowerCase(); if (!r.title.toLowerCase().includes(q) && !r.tags?.some(t=>t.toLowerCase().includes(q))) return false; }
@@ -1166,10 +976,22 @@ function RecipesTab({ recipes, items, busyToday, syncStatus, lastSync, syncError
     const pa=a.needs.filter(n=>pantryNames.includes(n)).length/Math.max(a.needs.length,1);
     const pb=b.needs.filter(n=>pantryNames.includes(n)).length/Math.max(b.needs.length,1);
     return pb-pa;
-  }), [recipes, pantryNames, matchOnly, busyOnly, sheetOnly, cuisine, favFilter, search]);
-  const sheetCount = recipes.filter(r=>r.fromSheet).length;
+  }), [recipes, pantryNames, matchOnly, busyOnly, sheetOnly, customOnly, cuisine, favFilter, search]);
+  var sheetCount  = recipes.filter(function(r){return r.fromSheet;}).length;
+  var customCount = customRecipes ? customRecipes.length : 0;
   return (
     <div>
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <h2 className="font-black text-xl" style={{ color:T.text, fontFamily:"Georgia,serif" }}>🍽️ 食譜庫</h2>
+          <p className="text-xs mt-0.5" style={{color:T.textSoft}}>{recipes.length} 個食譜{customCount>0 && <span style={{color:T.sage}}> · ✨ {customCount} 個自訂</span>}</p>
+        </div>
+        <button type="button" onClick={function(){setAddingCustom(true);}}
+          className="flex items-center gap-1.5 px-4 py-2.5 rounded-full font-black text-white shadow-sm active:scale-95"
+          style={{ background:"linear-gradient(135deg,"+T.sage+","+T.sage2+")" }}>
+          <Plus size={15} />自訂食譜
+        </button>
+      </div>
       {syncStatus==="loading" ? <div className="mb-4"><SheetLoadingCard /></div> : <SyncStatusBar status={syncStatus} lastSync={lastSync} errorMsg={syncError} onRefresh={onRefresh} />}
       <div className="relative mb-3">
         <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2" style={{color:T.textFaint}} />
@@ -1206,233 +1028,92 @@ function RecipesTab({ recipes, items, busyToday, syncStatus, lastSync, syncError
           style={sheetOnly ? {background:T.sky,color:"#fff",borderColor:T.sky} : {background:T.sky3,color:T.sky,borderColor:T.sky+"55"}}>
           <Wifi size={10} />Sheets ({sheetCount})
         </button>}
+        {customCount>0 && <button onClick={()=>setCustomOnly(v=>!v)} className="flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-black border-2"
+          style={customOnly ? {background:T.sage,color:"#fff",borderColor:T.sage} : {background:T.sage4,color:T.sage,borderColor:T.sage+"55"}}>
+          ✨自訂 ({customCount})
+        </button>}
       </div>
       <p className="text-xs mb-3" style={{ color:T.textFaint }}>顯示 <span className="font-black" style={{color:T.textMid}}>{filtered.length}</span> / {recipes.length} 個食譜
         {sheetCount>0 && <span style={{color:T.sky}}> · 📡 {sheetCount} 個來自 Sheets</span>}
       </p>
       <div className="grid grid-cols-1 gap-3">
         {filtered.length===0 ? <div className="text-center py-16"><span className="text-5xl">🌿</span><p className="mt-3 font-black" style={{color:T.textSoft}}>搵唔到食譜</p></div>
-          : filtered.map(r => <RecipeCard key={r.id} recipe={r} pantryNames={pantryNames} busyToday={busyToday} onOpen={setViewing} />)}
+          : filtered.map(function(r) { return (
+            <div key={r.id} style={{position:"relative"}}>
+              <RecipeCard recipe={r} pantryNames={pantryNames} busyToday={busyToday} onOpen={setViewing} />
+              {r.custom && (
+                <div style={{position:"absolute",top:12,right:12,display:"flex",gap:4}}>
+                  <button type="button" onClick={function(){setEditingCustom(r);}}
+                    className="w-7 h-7 rounded-full flex items-center justify-center"
+                    style={{ background:T.honey3, border:"1.5px solid "+T.honey2 }}>
+                    <Icon name="pencil" size={11} style={{color:T.terra}} />
+                  </button>
+                  <button type="button" onClick={function(){deleteCustomRecipe(r.id);}}
+                    className="w-7 h-7 rounded-full flex items-center justify-center"
+                    style={{ background:T.alert3, border:"1.5px solid "+T.alert2 }}>
+                    <Trash2 size={11} style={{color:T.alert}} />
+                  </button>
+                </div>
+              )}
+            </div>
+          ); })}
       </div>
-      {viewing && <RecipeViewModal recipe={viewing} pantryNames={pantryNames} onClose={()=>setViewing(null)} />}
+      {viewing && <RecipeViewModal recipe={viewing} pantryNames={pantryNames} onClose={function(){setViewing(null);}} />}
+      {addingCustom && <CustomRecipeModal onSave={saveCustomRecipe} onClose={function(){setAddingCustom(false);}} />}
+      {editingCustom && <CustomRecipeModal editing={editingCustom} onSave={saveCustomRecipe} onClose={function(){setEditingCustom(null);}} />}
     </div>
   );
 }
 
 // ── PLAN TAB ──────────────────────────────────────────────────────────────────
-// ── RECIPE SEARCH PICKER MODAL ────────────────────────────────────────────────
-function RecipePickerModal({ recipes, items, dayLabel, onPick, onClose }) {
-  const [search, setSearch] = useState("");
-  const pantryNames = useMemo(() => items.filter(i=>i.section!=="leftover").map(i=>i.name), [items]);
-  const filtered = useMemo(() => {
-    const q = search.toLowerCase();
-    return recipes.filter(r => !q || r.title.toLowerCase().includes(q) || r.tags?.some(t=>t.toLowerCase().includes(q)));
-  }, [recipes, search]);
-  useEffect(() => { document.body.style.overflow = "hidden"; return () => { document.body.style.overflow = ""; }; }, []);
-  return (
-    <Modal>
-      <div onMouseDown={e => e.target===e.currentTarget && onClose()}
-        style={{ position:"fixed", top:0, left:0, right:0, bottom:0, zIndex:9999, background:"#3D2B1F88", display:"flex", alignItems:"flex-end", justifyContent:"center" }}>
-        <div style={{ background:T.cream, position:"relative", zIndex:10000, width:"100%", maxWidth:"640px", borderRadius:"24px 24px 0 0", maxHeight:"85vh", display:"flex", flexDirection:"column", boxShadow:"0 -8px 40px #3D2B1F33" }}>
-          <div className="flex-shrink-0 px-5 pt-5 pb-3" style={{ borderBottom:`1.5px solid ${T.cream3}` }}>
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="font-black text-lg" style={{ color:T.text, fontFamily:"Georgia,serif" }}>🔍 揀食譜 — {dayLabel}</h3>
-              <button onClick={onClose} className="w-9 h-9 rounded-full flex items-center justify-center" style={{ background:T.cream3 }}>
-                <X size={16} style={{color:T.textMid}} />
-              </button>
-            </div>
-            <div className="relative">
-              <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2" style={{color:T.textFaint}} />
-              <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="搜尋食譜名稱或標籤…" autoFocus
-                className="w-full pl-8 pr-8 py-2.5 rounded-xl border-2 text-sm outline-none"
-                style={{ background:T.cream2, borderColor:T.cream3, color:T.text }} />
-              {search && <button onClick={()=>setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2"><X size={12} style={{color:T.textFaint}} /></button>}
-            </div>
-          </div>
-          <div className="overflow-y-auto flex-1 px-4 py-3 space-y-2">
-            {filtered.length === 0 && (
-              <div className="text-center py-10"><span className="text-4xl">🌿</span><p className="mt-2 text-sm font-black" style={{color:T.textSoft}}>搵唔到食譜</p></div>
-            )}
-            {filtered.map(r => {
-              const matched = r.needs.filter(n=>pantryNames.includes(n)).length;
-              const pct = r.needs.length ? Math.round((matched/r.needs.length)*100) : 100;
-              const canMake = pct===100;
-              return (
-                <button key={r.id} onClick={()=>{ onPick(r); onClose(); }}
-                  className="w-full flex items-center gap-3 px-3.5 py-3 rounded-2xl text-left active:scale-[0.98]"
-                  style={{ background:canMake?r.color+"18":T.cream2, border:`1.5px solid ${canMake?r.color:T.cream3}` }}>
-                  <span className="text-2xl flex-shrink-0">{r.emoji}</span>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-black text-sm truncate" style={{ color:T.text, fontFamily:"Georgia,serif" }}>{r.title}</p>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      <span className="text-xs flex items-center gap-0.5" style={{color:T.textSoft}}><Clock size={9}/>{r.time}分</span>
-                      <span className="text-xs font-bold" style={{color:canMake?T.sage:T.honey}}>{pct}% 齊料</span>
-                      {r.fromSheet && <span className="text-xs font-bold" style={{color:T.sky}}>📡</span>}
-                    </div>
-                  </div>
-                  <Check size={14} style={{color:canMake?T.sage:T.cream3,flexShrink:0}} />
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-    </Modal>
-  );
-}
-
 function PlanTab({ recipes, items }) {
   const dow = getDow();
-  // Build the 7-day array with actual calendar dates
-  const today = new Date(); today.setHours(0,0,0,0);
-  const weekDays = Array.from({length:7},(_,i) => {
-    const d = new Date(today); d.setDate(today.getDate()+i);
-    return { dow: d.getDay(), date: d, idx: i };
-  });
-
-  const pantryNames  = useMemo(() => items.filter(i=>i.section!=="leftover").map(i=>i.name), [items]);
-  const frozenItems  = useMemo(() => items.filter(i=>i.section==="frozen"), [items]);
-
-  // mealPlan: { [dateStr]: recipe | null }
-  const [mealPlan, setMealPlan]     = useState({});
-  const [pickerDay, setPickerDay]   = useState(null); // { dateStr, label }
-
-  const dateStr = (d) => d.toISOString().split("T")[0];
-
-  const setMeal = (ds, recipe) => setMealPlan(p => ({...p, [ds]: recipe}));
-  const clearMeal = (ds) => setMealPlan(p => { const n={...p}; delete n[ds]; return n; });
-
-  // Defrost reminders: for each day, check if recipe has frozen ingredients in stock
-  // Remind the PREVIOUS day (or today if meal is today)
-  const defrostReminders = useMemo(() => {
-    const reminders = {};
-    weekDays.forEach(({date, idx}) => {
-      const ds = dateStr(date);
-      const recipe = mealPlan[ds];
-      if (!recipe) return;
-      const frozenNeeded = recipe.needs.filter(n =>
-        frozenItems.some(f => f.name === n || f.name.includes(n) || n.includes(f.name))
-      );
-      if (frozenNeeded.length === 0) return;
-      // Remind on the day before (or today if meal is today)
-      const remindDate = new Date(date); remindDate.setDate(date.getDate() - 1);
-      const remindDs = dateStr(remindDate);
-      if (!reminders[remindDs]) reminders[remindDs] = [];
-      reminders[remindDs].push({ recipe: recipe.title, emoji: recipe.emoji, items: frozenNeeded });
-    });
-    return reminders;
-  }, [mealPlan, frozenItems, weekDays]);
-
-  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-  const fmtDate = (d) => `${d.getDate()} ${MONTHS[d.getMonth()]}`;
-
+  const week = Array.from({length:7},(_,i) => (dow+i)%7);
+  const pantryNames = useMemo(() => items.filter(i=>i.section!=="leftover").map(i=>i.name), [items]);
   return (
     <div>
       <h2 className="font-black text-xl mb-1" style={{ color:T.text, fontFamily:"Georgia,serif" }}>📅 本週餐單</h2>
-      <p className="text-xs mb-4" style={{ color:T.textSoft }}>撳 <strong>+</strong> 搜尋食譜加入某日餐單 · 忙碌日自動提示快手食譜</p>
-
-      {/* Defrost reminder banner */}
-      {Object.keys(defrostReminders).length > 0 && (
-        <div className="mb-4 rounded-2xl overflow-hidden" style={{ border:`2px solid ${T.frozen}`, background:T.frozen3 }}>
-          <div className="flex items-center gap-2 px-4 py-2.5" style={{ background:T.frozen }}>
-            <span className="text-base">❄️</span>
-            <p className="font-black text-sm text-white">解凍提醒</p>
-          </div>
-          <div className="px-4 py-3 space-y-2">
-            {weekDays.map(({date}) => {
-              const ds = dateStr(date);
-              const reminders = defrostReminders[ds];
-              if (!reminders) return null;
-              const isToday = ds === dateStr(today);
-              return (
-                <div key={ds} className="flex items-start gap-2">
-                  <span className="text-xs font-black px-2 py-0.5 rounded-full flex-shrink-0 mt-0.5"
-                    style={{ background:isToday?T.frozen:"#ffffff55", color:isToday?"#fff":T.frozen }}>
-                    {isToday?"今日":fmtDate(date)}
-                  </span>
-                  <div>
-                    {reminders.map((r,i) => (
-                      <p key={i} className="text-xs leading-relaxed" style={{color:"#2a5a7a"}}>
-                        記得解凍 <strong>{r.items.join("、")}</strong>，明日煮 {r.emoji} {r.recipe}
-                      </p>
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
+      <p className="text-xs mb-4" style={{ color:T.textSoft }}>忙碌日自動推薦快手食譜</p>
       <div className="space-y-3">
-        {weekDays.map(({ dow: dayDow, date, idx }) => {
-          const ds = dateStr(date);
-          const isToday = idx === 0;
-          const dayBusy = isBusy(dayDow);
-          const assigned = mealPlan[ds] || null;
-          const pct = assigned ? Math.round((assigned.needs.filter(n=>pantryNames.includes(n)).length/Math.max(assigned.needs.length,1))*100) : 0;
-          const dayLabel = `週${DAYS_ZH[dayDow]} ${fmtDate(date)}`;
-
+        {week.map((dayDow,idx) => {
+          const isToday = idx===0; const dayBusy = isBusy(dayDow);
+          const pool = [...recipes].filter(r=>dayBusy?r.time<=20:true).sort((a,b) => {
+            const pa=a.needs.filter(n=>pantryNames.includes(n)).length/Math.max(a.needs.length,1);
+            const pb=b.needs.filter(n=>pantryNames.includes(n)).length/Math.max(b.needs.length,1);
+            return pb-pa;
+          });
+          const pick = pool[idx%Math.max(pool.length,1)];
+          const pct = pick ? Math.round((pick.needs.filter(n=>pantryNames.includes(n)).length/Math.max(pick.needs.length,1))*100) : 0;
           return (
-            <div key={ds} className="rounded-3xl overflow-hidden"
+            <div key={dayDow} className="rounded-3xl overflow-hidden"
               style={{ border:`2px solid ${isToday?T.honey:T.cream3}`, boxShadow:isToday?`0 4px 16px ${T.honey}33`:"none" }}>
-              {/* Day header */}
               <div className="flex items-center justify-between px-4 py-2.5" style={{ background:dayBusy?T.honey3:T.cream2 }}>
                 <div className="flex items-center gap-2">
                   {isToday && <span className="text-xs font-black px-2.5 py-0.5 rounded-full text-white" style={{background:T.honey}}>今日</span>}
-                  <span className="font-black text-sm" style={{color:T.text}}>週{DAYS_ZH[dayDow]}</span>
-                  <span className="text-xs" style={{color:T.textFaint}}>{fmtDate(date)}</span>
+                  <span className="font-black" style={{color:T.text}}>週{DAYS_ZH[dayDow]}</span>
                   {dayBusy && <span className="text-xs font-bold flex items-center gap-0.5" style={{color:T.terra}}><Zap size={10}/>忙碌日</span>}
                 </div>
-                <button onClick={() => setPickerDay({ dateStr: ds, label: dayLabel })}
-                  className="w-7 h-7 rounded-full flex items-center justify-center active:scale-90"
-                  style={{ background:T.sage, color:"#fff" }}>
-                  <Plus size={14} />
-                </button>
+                {dayBusy && <span className="text-xs" style={{color:T.textFaint}}>≤20分鐘</span>}
               </div>
-
-              {/* Assigned recipe */}
-              {assigned ? (
+              {pick && (
                 <div className="px-4 py-3 flex items-center gap-3" style={{ background:T.cream }}>
-                  <span className="text-2xl">{assigned.emoji}</span>
+                  <span className="text-2xl">{pick.emoji}</span>
                   <div className="flex-1 min-w-0">
                     <p className="font-black text-sm truncate" style={{ color:T.text, fontFamily:"Georgia,serif" }}>
-                      {assigned.title}{assigned.fromSheet && <span className="ml-1 text-xs font-normal" style={{color:T.sky}}>📡</span>}
+                      {pick.title}{pick.fromSheet && <span className="ml-1 text-xs font-normal" style={{color:T.sky}}>📡</span>}
                     </p>
                     <p className="text-xs flex items-center gap-1 mt-0.5" style={{ color:T.textSoft }}>
-                      <Clock size={9}/>{assigned.time}分鐘
-                      <span className="font-bold" style={{color:pct===100?T.sage:T.honey}}>· {pct}% 齊料</span>
+                      <Clock size={9}/>{pick.time}分鐘
+                      {pick.favourites?.length>0 && <span>· {pick.favourites.map(fid=>FAMILY.find(f=>f.id===fid)?.emoji).join("")}最愛</span>}
                     </p>
                   </div>
-                  <button onClick={() => clearMeal(ds)} className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0"
-                    style={{ background:T.cream3 }}>
-                    <X size={12} style={{color:T.textSoft}} />
-                  </button>
+                  <span className="text-xs font-black" style={{ color:pct===100?T.sage:T.honey }}>{pct}%</span>
                 </div>
-              ) : (
-                <button onClick={() => setPickerDay({ dateStr: ds, label: dayLabel })}
-                  className="w-full px-4 py-3 flex items-center gap-2 text-left"
-                  style={{ background:T.cream }}>
-                  <span className="text-lg">🍽️</span>
-                  <span className="text-sm" style={{color:T.textFaint}}>
-                    {dayBusy ? "撳 + 揀快手食譜（≤20分鐘）" : "撳 + 揀今日食譜…"}
-                  </span>
-                </button>
               )}
             </div>
           );
         })}
       </div>
-
-      {pickerDay && (
-        <RecipePickerModal
-          recipes={recipes}
-          items={items}
-          dayLabel={pickerDay.label}
-          onPick={(r) => setMeal(pickerDay.dateStr, r)}
-          onClose={() => setPickerDay(null)}
-        />
-      )}
     </div>
   );
 }
@@ -1723,17 +1404,147 @@ const MAIN_TABS = [
   { id:"ai",      label:"AI 視覺",  icon:Sparkles },
 ];
 
+
+// ── CUSTOM RECIPE MODAL ────────────────────────────────────────────────────────
+var RECIPE_EMOJIS = ["🍲","🍜","🍝","🍛","🍣","🍱","🥘","🫕","🥗","🍗","🥩","🐟","🦐","🥚","🥬","🍕","🥙","🌮","🫔","🥟","🍳","🔥","🍽️","🫖","🎉"];
+var CUISINE_OPTS = [
+  {id:"chinese",label:"中式",emoji:"🏮"},{id:"japanese",label:"日式",emoji:"🌸"},
+  {id:"korean",label:"韓式",emoji:"🌶️"},{id:"thai",label:"泰式",emoji:"🌺"},
+  {id:"western",label:"Western",emoji:"🫐"},{id:"dessert",label:"甜品",emoji:"🍰"},
+  {id:"other",label:"其他",emoji:"🌍"},
+];
+function CustomRecipeModal({ onSave, onClose, editing }) {
+  const [title,   setTitle]   = useState(editing ? editing.title : "");
+  const [emoji,   setEmoji]   = useState(editing ? editing.emoji : "🍽️");
+  const [cuisine, setCuisine] = useState(editing ? editing.cuisine : "other");
+  const [time,    setTime]    = useState(editing ? editing.time : 30);
+  const [needs,   setNeeds]   = useState(editing ? (editing.needs||[]).join("、") : "");
+  const [notes,   setNotes]   = useState(editing ? (editing.notes||"") : "");
+  const [busy,    setBusy]    = useState(editing ? (editing.tags||[]).includes("忙日快手") : false);
+  var palette = [T.honey, T.peach, T.sage, T.terra2, T.sky, T.rose, T.sage2];
+  var submit = function() {
+    if (!title.trim()) return;
+    var needsArr = needs.split(/[、,，\n]/).map(function(s){return s.trim();}).filter(Boolean);
+    var id = editing ? editing.id : ("custom_" + Date.now());
+    var charSum = title.split("").reduce(function(a,c){return a+c.charCodeAt(0);}, 0);
+    var color = palette[Math.abs(charSum) % palette.length];
+    onSave({ id:id, title:title.trim(), emoji:emoji, cuisine:cuisine,
+      time:parseInt(time)||30, color:color, tags:busy?["忙日快手"]:[],
+      needs:needsArr, optional:[], steps:[], notes:notes.trim(),
+      favourites:[], fasterMethod:null, fromSheet:false, custom:true });
+    onClose();
+  };
+  useEffect(function() {
+    document.body.style.overflow = "hidden";
+    return function() { document.body.style.overflow = ""; };
+  }, []);
+  return (
+    <Modal>
+      <div onMouseDown={function(e){if(e.target===e.currentTarget)onClose();}}
+        style={{ position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:9999,background:"#3D2B1F88",display:"flex",alignItems:"flex-end",justifyContent:"center" }}>
+        <div style={{ background:T.cream,width:"100%",maxWidth:"640px",borderRadius:"24px 24px 0 0",maxHeight:"90vh",display:"flex",flexDirection:"column",boxShadow:"0 -8px 40px #3D2B1F33" }}>
+          <div className="flex-shrink-0 px-5 pt-5 pb-3" style={{ borderBottom:"1.5px solid "+T.cream3 }}>
+            <div className="flex items-center justify-between">
+              <h3 className="font-black text-lg" style={{ color:T.text, fontFamily:"Georgia,serif" }}>
+                {editing ? "✏️ 編輯食譜" : "✨ 自訂食譜"}
+              </h3>
+              <button onClick={onClose} className="w-9 h-9 rounded-full flex items-center justify-center" style={{ background:T.cream3 }}>
+                <X size={16} style={{color:T.textMid}} />
+              </button>
+            </div>
+          </div>
+          <div className="overflow-y-auto flex-1 px-5 py-4 space-y-4">
+            <div>
+              <p className="text-xs font-black uppercase tracking-widest mb-2" style={{color:T.textSoft}}>食物圖示</p>
+              <div className="flex flex-wrap gap-2">
+                {RECIPE_EMOJIS.map(function(e) { return (
+                  <button key={e} type="button" onClick={function(){setEmoji(e);}}
+                    className="w-9 h-9 rounded-xl flex items-center justify-center text-xl"
+                    style={{ background:emoji===e?T.sage3:T.cream2, border:"2px solid "+(emoji===e?T.sage:T.cream3) }}>
+                    {e}
+                  </button>
+                ); })}
+              </div>
+            </div>
+            <div>
+              <p className="text-xs font-black uppercase tracking-widest mb-1" style={{color:T.textSoft}}>菜式名稱 *</p>
+              <input value={title} onChange={function(e){setTitle(e.target.value);}} placeholder="例如：火鍋、壽喜燒、烤雞…"
+                className="w-full px-3 py-2.5 rounded-xl border-2 text-sm outline-none"
+                style={{ background:T.cream2, borderColor:title.trim()?T.sage:T.cream3, color:T.text }} />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <p className="text-xs font-black uppercase tracking-widest mb-1" style={{color:T.textSoft}}>類型</p>
+                <select value={cuisine} onChange={function(e){setCuisine(e.target.value);}}
+                  className="w-full px-3 py-2.5 rounded-xl border-2 text-sm outline-none"
+                  style={{ background:T.cream2, borderColor:T.cream3, color:T.text }}>
+                  {CUISINE_OPTS.map(function(c){return <option key={c.id} value={c.id}>{c.emoji} {c.label}</option>;})}
+                </select>
+              </div>
+              <div>
+                <p className="text-xs font-black uppercase tracking-widest mb-1" style={{color:T.textSoft}}>時間（分鐘）</p>
+                <input type="number" min="1" max="300" value={time} onChange={function(e){setTime(e.target.value);}}
+                  className="w-full px-3 py-2.5 rounded-xl border-2 text-sm outline-none"
+                  style={{ background:T.cream2, borderColor:T.cream3, color:T.text }} />
+              </div>
+            </div>
+            <button type="button" onClick={function(){setBusy(function(b){return !b;});}}
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl border-2"
+              style={{ background:busy?T.honey3:T.cream2, borderColor:busy?T.honey:T.cream3 }}>
+              <span className="text-xl">⚡</span>
+              <div className="flex-1 text-left">
+                <p className="font-black text-sm" style={{color:busy?T.terra:T.text}}>忙日快手</p>
+                <p className="text-xs" style={{color:T.textSoft}}>忙碌日優先推薦</p>
+              </div>
+              <div className="w-11 h-6 rounded-full flex items-center px-0.5" style={{ background:busy?T.honey:T.cream3 }}>
+                <div className="w-5 h-5 rounded-full bg-white shadow-sm"
+                  style={{ transform:busy?"translateX(20px)":"translateX(0)", transition:"transform 0.2s" }} />
+              </div>
+            </button>
+            <div>
+              <p className="text-xs font-black uppercase tracking-widest mb-1" style={{color:T.textSoft}}>主要食材（頓號或逗號分隔，可留空）</p>
+              <textarea value={needs} onChange={function(e){setNeeds(e.target.value);}} rows={2}
+                placeholder="例如：火鍋湯底、牛肉片、魚蛋、豆腐…"
+                className="w-full px-3 py-2.5 rounded-xl border-2 text-sm outline-none resize-none"
+                style={{ background:T.cream2, borderColor:T.cream3, color:T.text }} />
+            </div>
+            <div>
+              <p className="text-xs font-black uppercase tracking-widest mb-1" style={{color:T.textSoft}}>備注（可選）</p>
+              <input value={notes} onChange={function(e){setNotes(e.target.value);}} placeholder="例如：全家最愛、冬天必備…"
+                className="w-full px-3 py-2.5 rounded-xl border-2 text-sm outline-none"
+                style={{ background:T.cream2, borderColor:T.cream3, color:T.text }} />
+            </div>
+          </div>
+          <div className="flex-shrink-0 px-5 pb-6 pt-3" style={{ borderTop:"1.5px solid "+T.cream3 }}>
+            <button type="button" onClick={submit} disabled={!title.trim()}
+              className="w-full py-4 rounded-2xl font-black text-white flex items-center justify-center gap-2 active:scale-95 disabled:opacity-40"
+              style={{ background:"linear-gradient(135deg,"+T.sage+","+T.sage2+")" }}>
+              <Check size={17} />{editing ? "更新食譜" : "儲存食譜"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 function App() {
   const dow = getDow(); const busyToday = isBusy(dow);
   const [tab, setTab]               = useState("storage");
-  const [items, setItems]           = useState(INIT_ITEMS);
-  const [essentials, setEssentials] = useState(DEFAULT_ESSENTIALS);
-  const [restockList, setRestockList] = useState([]);
+  const [items, setItems]           = usePersist("km_items", INIT_ITEMS);
+  const [essentials, setEssentials] = usePersist("km_essentials", DEFAULT_ESSENTIALS);
+  const [restockList, setRestockList] = usePersist("km_restock", []);
+  const [customRecipes, setCustomRecipes] = usePersist("km_custom_recipes", []);
   const { sheetRecipes, status:syncStatus, lastSync, errorMsg:syncError, refresh } = useSheetRecipes();
-  const allRecipes = useMemo(() => {
-    const sheetTitles = new Set(sheetRecipes.map(r => r.title.trim().toLowerCase()));
-    return [...sheetRecipes, ...LOCAL_RECIPES.filter(r => !sheetTitles.has(r.title.trim().toLowerCase()))];
-  }, [sheetRecipes]);
+  const allRecipes = useMemo(function() {
+    var sheetTitles  = new Set(sheetRecipes.map(function(r){return r.title.trim().toLowerCase();}));
+    var customTitles = new Set(customRecipes.map(function(r){return r.title.trim().toLowerCase();}));
+    return [].concat(
+      customRecipes,
+      sheetRecipes,
+      LOCAL_RECIPES.filter(function(r){ return !sheetTitles.has(r.title.trim().toLowerCase()) && !customTitles.has(r.title.trim().toLowerCase()); })
+    );
+  }, [sheetRecipes, customRecipes]);
   const alertCount = useMemo(() => items.filter(i => { const s=SECTIONS.find(x=>x.id===i.section); return s&&daysDiff(i.dateAdded)>=s.alertDays; }).length, [items]);
   const essentialsMissing = useMemo(() => { const inStock=new Set(items.map(i=>i.name.trim())); return essentials.filter(e=>!inStock.has(e.name.trim())).length; }, [items, essentials]);
 
@@ -1743,7 +1554,8 @@ function App() {
         @import url('https://fonts.googleapis.com/css2?family=Lora:wght@400;600;700&display=swap');
       `}</style>
       <div className="max-w-lg mx-auto">
-        <header className="sticky top-0 z-40 safe-top" style={{ background:T.cream, borderBottom:`1.5px solid ${T.cream3}` }}>
+        {/* HEADER */}
+        <header className="sticky top-0 z-40 safe-top" style={{ background:T.cream+"f0", backdropFilter:"blur(20px)", borderBottom:`1.5px solid ${T.cream3}` }}>
           <div className="px-4 pt-4 pb-2">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2.5">
@@ -1773,6 +1585,7 @@ function App() {
                 )}
               </div>
             </div>
+            {/* Tabs */}
             <div className="flex gap-1 p-1 rounded-2xl" style={{ background:T.cream3 }}>
               {MAIN_TABS.map(({id,label,icon:TabIcon}) => {
                 const active = tab===id;
@@ -1790,10 +1603,11 @@ function App() {
             </div>
           </div>
         </header>
+        {/* CONTENT */}
         <main className="px-4 pt-4 pb-28 safe-bottom">
           <div className="fade-up" key={tab}>
             {tab==="storage" && <StorageTab items={items} setItems={setItems} />}
-            {tab==="recipes" && <RecipesTab recipes={allRecipes} items={items} busyToday={busyToday} syncStatus={syncStatus} lastSync={lastSync} syncError={syncError} onRefresh={refresh} />}
+            {tab==="recipes" && <RecipesTab recipes={allRecipes} items={items} busyToday={busyToday} syncStatus={syncStatus} lastSync={lastSync} syncError={syncError} onRefresh={refresh} customRecipes={customRecipes} setCustomRecipes={setCustomRecipes} />}
             {tab==="plan"    && <PlanTab recipes={allRecipes} items={items} />}
             {tab==="ai"      && <AIVisionTab items={items} setItems={setItems} essentials={essentials} setEssentials={setEssentials} restockList={restockList} setRestockList={setRestockList} />}
           </div>
