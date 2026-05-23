@@ -294,14 +294,15 @@ function parseCSVtoRecipes(text) {
     const rawTags = getCol(cols, COL.tags);
     const rawTime = getCol(cols, COL.time);
     const rawCuisine = getCol(cols, COL.cuisine);
-    const ingredients = rawIng ? rawIng.split(/[、,，\n\/]/).map(s => s.trim()).filter(Boolean) : [];
-    const tags = rawTags ? rawTags.split(/[、,，\n]/).map(s => s.trim()).filter(Boolean) : [];
+    const splitField = (raw) => raw.split(/[|｜\r\n]+/).map(s => s.replace(/^\d+[\.\、\s]+/, "").trim()).filter(Boolean);
+    const ingredients = rawIng ? splitField(rawIng) : [];
+    const tags = rawTags ? rawTags.split(/[|｜、,，\r\n]/).map(s => s.trim()).filter(Boolean) : [];
     const timeRaw = parseInt(rawTime);
     const time = (timeRaw > 0 && timeRaw <= 480) ? timeRaw : 30;
     const emoji = getCol(cols, COL.emoji) || "🍽️";
     const notes = getCol(cols, COL.notes);
     const rawSteps = getCol(cols, COL.steps);
-    const steps = rawSteps ? rawSteps.split(/[。\n]/).map(s => s.trim()).filter(Boolean) : [];
+    const steps = rawSteps ? splitField(rawSteps) : [];
     const rawFav = getCol(cols, COL.favourites).toLowerCase();
     const favourites = FAMILY.filter(f => rawFav.includes(f.label.toLowerCase()) || rawFav.includes(f.id)).map(f => f.id);
     const cuisine = tagToCuisine(rawTags, rawCuisine);
@@ -339,6 +340,7 @@ function useSheetRecipes() {
           if (j.csv) csvText = j.csv;
         } catch(e) { /* it's plain CSV, fine */ }
         const parsed = parseCSVtoRecipes(csvText);
+        window.__kmDebugCSV = csvText.slice(0, 500); // debug: check in console
         if (parsed.length === 0) { lastErr = "無食譜數據"; continue; }
         setSheetRecipes(parsed);
         setStatus("success"); setLastSync(new Date());
