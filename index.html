@@ -608,7 +608,7 @@ function AddItemModal({ defaultSection, onAdd, onClose }) {
 
 // ── FOOD ITEM ROW ──────────────────────────────────────────────────────────────
 function FoodItemRow({ item, onDelete, onMove }) {
-  var sec = SECTIONS.find(function(s) { return s.id === item.section; });
+  var sec = SECTIONS.find(function(s) { return s.id === item.section; }) || SECTIONS[0];
   var days = daysDiff(item.dateAdded);
   var badge = freshBadge(days, sec.alertDays);
   var isAlert = days >= sec.alertDays;
@@ -1450,11 +1450,16 @@ function AIVisionTab({ items, setItems, essentials, setEssentials, restockList, 
     catch(err) { setErrMsg(err.message||"未知錯誤"); setStatus("error"); }
   };
 
+  const VALID_SECTIONS = new Set(["fridge","frozen","pantry","leftover"]);
   const applyItems = () => {
     if (!result) return;
     const selected = result.items.filter((_,i) => confirmed.includes(i));
     if (mode==="restock") {
-      const newItems = selected.map(item => ({ id:uid(), name:item.name, emoji:item.emoji||"🍽️", section:item.section||"fridge", qty:item.qty||1, unit:item.unit||"份", dateAdded:todayStr(), notes:"AI 辨識加入" }));
+      const newItems = selected.map(item => ({
+        id:uid(), name:item.name, emoji:item.emoji||"🍽️",
+        section: VALID_SECTIONS.has(item.section) ? item.section : "fridge",
+        qty:item.qty||1, unit:item.unit||"份", dateAdded:todayStr(), notes:"AI 辨識加入"
+      }));
       setItems(prev => { const existing=new Set(prev.map(p=>p.name+p.section)); return [...newItems.filter(n=>!existing.has(n.name+n.section)),...prev]; });
     } else {
       const names = new Set(selected.map(s=>s.name));
