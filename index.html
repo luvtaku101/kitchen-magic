@@ -246,12 +246,24 @@ function parseCSVtoRecipes(text) {
     cols.push(cur.trim()); return cols;
   };
   const headers = parseLine(lines[0]).map(h => h.toLowerCase().replace(/\s/g,""));
-  const colIdx = (candidates) => { for (const c of candidates) { const i = headers.findIndex(h => h.includes(c)); if (i !== -1) return i; } return -1; };
+  const colIdx = (candidates) => {
+    // Exact match first (avoids "timestamp" matching "time")
+    for (const c of candidates) {
+      const i = headers.findIndex(h => h === c);
+      if (i !== -1) return i;
+    }
+    // Then partial match, but explicitly exclude "timestamp"
+    for (const c of candidates) {
+      const i = headers.findIndex(h => h.includes(c) && !h.includes("timestamp") && !h.includes("date"));
+      if (i !== -1) return i;
+    }
+    return -1;
+  };
   const COL = {
     name:       colIdx(["名稱","食譜名","recipe","name","title","標題"]),
     ingredients:colIdx(["食材","材料","ingredient","ingredients"]),
     tags:       colIdx(["標籤","分類","tag","tags","type","類型","cuisine"]),
-    time:       colIdx(["時間","烹飪時間","分鐘","minutes","time","min"]),
+    time:       colIdx(["timings","timing","時間","烹飪時間","分鐘","minutes","time","min"]),
     emoji:      colIdx(["emoji","表情","icon"]),
     notes:      colIdx(["備注","備註","notes","note","tips","提示"]),
     steps:      colIdx(["步驟","做法","steps","instructions"]),
@@ -278,7 +290,8 @@ function parseCSVtoRecipes(text) {
     const rawCuisine = getCol(cols, COL.cuisine);
     const ingredients = rawIng ? rawIng.split(/[、,，\n\/]/).map(s => s.trim()).filter(Boolean) : [];
     const tags = rawTags ? rawTags.split(/[、,，\n]/).map(s => s.trim()).filter(Boolean) : [];
-    const time = parseInt(rawTime) || 30;
+    const timeRaw = parseInt(rawTime);
+    const time = (timeRaw > 0 && timeRaw <= 480) ? timeRaw : 30;
     const emoji = getCol(cols, COL.emoji) || "🍽️";
     const notes = getCol(cols, COL.notes);
     const rawSteps = getCol(cols, COL.steps);
