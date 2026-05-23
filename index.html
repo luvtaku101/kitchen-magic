@@ -190,8 +190,7 @@ async function callVisionAI(base64, mediaType, mode) {
       { inline_data: { mime_type: mediaType, data: base64 } },
       { text: prompt }
     ]}],
-    generationConfig: { temperature: 0.1, maxOutputTokens: 2048,
-      responseMimeType: "application/json" }
+    generationConfig: { temperature: 0.1, maxOutputTokens: 2048 }
   };
   const MAX_RETRIES = 3;
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
