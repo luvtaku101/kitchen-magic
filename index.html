@@ -880,9 +880,18 @@ function StorageTab({ items, setItems, customRecipes, setCustomRecipes }) {
   );
 }
 
+// Fuzzy pantry match — true if ingredient name and pantry item overlap
+function fuzzyMatch(need, pantryNames) {
+  const n = need.toLowerCase().trim();
+  return pantryNames.some(function(p) {
+    const pn = p.toLowerCase().trim();
+    return pn === n || pn.includes(n) || n.includes(pn);
+  });
+}
+
 // ── RECIPE CARD ────────────────────────────────────────────────────────────────
 function RecipeCard({ recipe, pantryNames, busyToday, onOpen }) {
-  const matched = recipe.needs.filter(n => pantryNames.includes(n)).length;
+  const matched = recipe.needs.filter(n => fuzzyMatch(n, pantryNames)).length;
   const pct = recipe.needs.length ? Math.round((matched/recipe.needs.length)*100) : 100;
   const canMake = pct===100; const partial = pct>=50 && !canMake;
   const cuisineObj = CUISINES.find(c => c.id===recipe.cuisine)||CUISINES[0];
@@ -939,9 +948,9 @@ function RecipeViewModal({ recipe, pantryNames, onClose, onAddToRestock }) {
   const [tab, setTab]   = useState("ingredients");
   const [done, setDone] = useState([]);
   const [added, setAdded] = useState(false);
-  const matched = recipe.needs.filter(n => pantryNames.includes(n)).length;
+  const matched = recipe.needs.filter(n => fuzzyMatch(n, pantryNames)).length;
   const pct = recipe.needs.length ? Math.round((matched/recipe.needs.length)*100) : 100;
-  const missing = recipe.needs.filter(n => !pantryNames.includes(n));
+  const missing = recipe.needs.filter(n => !fuzzyMatch(n, pantryNames));
   useEffect(() => { document.body.style.overflow = "hidden"; return () => { document.body.style.overflow = ""; }; }, []);
   const handleAddMissing = function() {
     if (onAddToRestock && missing.length > 0) {
@@ -1047,7 +1056,7 @@ function RecipeViewModal({ recipe, pantryNames, onClose, onAddToRestock }) {
                   {recipe.optional.map((n,i) => (
                     <div key={i} className="flex items-center gap-3 py-2 opacity-60">
                       <span className="flex-1 text-sm" style={{ color:T.textMid }}>{n} <span style={{color:T.textFaint}}>（可選）</span></span>
-                      {pantryNames.includes(n) && <Check size={13} style={{color:T.sage2}} />}
+                      {fuzzyMatch(n, pantryNames) && <Check size={13} style={{color:T.sage2}} />}
                     </div>
                   ))}
                 </>
@@ -1101,7 +1110,7 @@ function RecipesTab({ recipes, items, busyToday, syncStatus, lastSync, syncError
   };
   const pantryNames = useMemo(() => items.filter(i=>i.section!=="leftover").map(i=>i.name), [items]);
   const filtered = useMemo(() => recipes.filter(r => {
-    const m = r.needs.filter(n=>pantryNames.includes(n)).length;
+    const m = r.needs.filter(n=>fuzzyMatch(n,pantryNames)).length;
     const pct = r.needs.length ? Math.round((m/r.needs.length)*100) : 100;
     if (matchOnly  && pct<100) return false;
     if (busyOnly   && r.time>20) return false;
@@ -1112,8 +1121,8 @@ function RecipesTab({ recipes, items, busyToday, syncStatus, lastSync, syncError
     if (search) { const q=search.toLowerCase(); if (!r.title.toLowerCase().includes(q) && !r.tags?.some(t=>t.toLowerCase().includes(q))) return false; }
     return true;
   }).sort((a,b) => {
-    const pa=a.needs.filter(n=>pantryNames.includes(n)).length/Math.max(a.needs.length,1);
-    const pb=b.needs.filter(n=>pantryNames.includes(n)).length/Math.max(b.needs.length,1);
+    const pa=a.needs.filter(n=>fuzzyMatch(n,pantryNames)).length/Math.max(a.needs.length,1);
+    const pb=b.needs.filter(n=>fuzzyMatch(n,pantryNames)).length/Math.max(b.needs.length,1);
     return pb-pa;
   }), [recipes, pantryNames, matchOnly, busyOnly, sheetOnly, customOnly, cuisine, favFilter, search]);
   var sheetCount  = recipes.filter(function(r){return r.fromSheet;}).length;
@@ -1331,7 +1340,7 @@ function DayMealPicker({ dateKey, dayDow, isToday, recipes, pantryNames, plan, o
                 style={{background:T.cream2, borderColor:T.cream3, color:T.text}} />
               <div className="space-y-1.5 max-h-52 overflow-y-auto">
                 {filtered.slice(0,20).map(function(r) {
-                  const pct = r.needs.length ? Math.round((r.needs.filter(n=>pantryNames.includes(n)).length/r.needs.length)*100) : 100;
+                  const pct = r.needs.length ? Math.round((r.needs.filter(n=>fuzzyMatch(n,pantryNames)).length/r.needs.length)*100) : 100;
                   return (
                     <button key={r.id} type="button" onClick={function(){addRecipe(r);}}
                       className="w-full flex items-center gap-2.5 px-3 py-2 rounded-2xl text-left active:scale-[0.98] border-2"
