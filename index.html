@@ -898,13 +898,21 @@ function RecipeCard({ recipe, pantryNames, busyToday, onOpen }) {
 }
 
 // ── RECIPE VIEW MODAL ──────────────────────────────────────────────────────────
-function RecipeViewModal({ recipe, pantryNames, onClose }) {
+function RecipeViewModal({ recipe, pantryNames, onClose, onAddToRestock }) {
   const [tab, setTab]   = useState("ingredients");
   const [done, setDone] = useState([]);
+  const [added, setAdded] = useState(false);
   const matched = recipe.needs.filter(n => pantryNames.includes(n)).length;
   const pct = recipe.needs.length ? Math.round((matched/recipe.needs.length)*100) : 100;
   const missing = recipe.needs.filter(n => !pantryNames.includes(n));
   useEffect(() => { document.body.style.overflow = "hidden"; return () => { document.body.style.overflow = ""; }; }, []);
+  const handleAddMissing = function() {
+    if (onAddToRestock && missing.length > 0) {
+      onAddToRestock(missing);
+      setAdded(true);
+      setTimeout(function(){ setAdded(false); }, 2500);
+    }
+  };
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center" style={{ background:"#3D2B1F99" }}
       onMouseDown={e => e.target===e.currentTarget && onClose()}>
@@ -953,9 +961,27 @@ function RecipeViewModal({ recipe, pantryNames, onClose }) {
               ))}
           </div>
           {missing.length>0 && (
-            <div className="mb-3 px-3 py-2.5 rounded-2xl flex items-start gap-2" style={{ background:T.peach4, border:`1.5px solid ${T.peach3}` }}>
-              <AlertCircle size={13} style={{color:T.peach,flexShrink:0,marginTop:1}} />
-              <p className="text-xs" style={{ color:T.rose }}><span className="font-black">欠缺：</span>{missing.join("、")}</p>
+            <div className="mb-3 rounded-2xl overflow-hidden" style={{ border:`1.5px solid ${T.peach3}` }}>
+              <div className="px-3 py-2.5 flex items-start gap-2" style={{ background:T.peach4 }}>
+                <AlertCircle size={13} style={{color:T.peach,flexShrink:0,marginTop:1}} />
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-black mb-1" style={{ color:T.rose }}>需要購買 ({missing.length} 樣)</p>
+                  <p className="text-xs leading-relaxed" style={{ color:T.rose }}>{missing.join("、")}</p>
+                </div>
+              </div>
+              {onAddToRestock && (
+                <button type="button" onClick={handleAddMissing}
+                  className="w-full py-2.5 flex items-center justify-center gap-2 text-xs font-black active:scale-[0.98]"
+                  style={{ background:added?T.sage4:T.peach3, color:added?T.sage:T.rose }}>
+                  {added ? <><Check size={12}/>已加入補貨清單！</> : <><ShoppingCart size={12}/>加入補貨清單</>}
+                </button>
+              )}
+            </div>
+          )}
+          {missing.length===0 && recipe.needs.length>0 && (
+            <div className="mb-3 px-3 py-2.5 rounded-2xl flex items-center gap-2" style={{ background:T.sage4, border:`1.5px solid ${T.sage3}` }}>
+              <Check size={13} style={{color:T.sage}} />
+              <p className="text-xs font-black" style={{ color:T.sage }}>所有食材齊備！可以即刻煮 🎉</p>
             </div>
           )}
           {recipe.notes && (
@@ -1015,7 +1041,7 @@ function RecipeViewModal({ recipe, pantryNames, onClose }) {
 }
 
 // ── RECIPES TAB ────────────────────────────────────────────────────────────────
-function RecipesTab({ recipes, items, busyToday, syncStatus, lastSync, syncError, onRefresh, customRecipes, setCustomRecipes }) {
+function RecipesTab({ recipes, items, busyToday, syncStatus, lastSync, syncError, onRefresh, customRecipes, setCustomRecipes, setRestockList }) {
   const [search, setSearch]       = useState("");
   const [cuisine, setCuisine]     = useState("all");
   const [favFilter, setFav]       = useState(null);
@@ -1133,7 +1159,7 @@ function RecipesTab({ recipes, items, busyToday, syncStatus, lastSync, syncError
             </div>
           ); })}
       </div>
-      {viewing && <RecipeViewModal recipe={viewing} pantryNames={pantryNames} onClose={function(){setViewing(null);}} />}
+      {viewing && <RecipeViewModal recipe={viewing} pantryNames={pantryNames} onClose={function(){setViewing(null);}} onAddToRestock={function(missing){ setRestockList(function(prev){ var ex=new Set(prev.map(function(r){return r.name;})); return prev.concat(missing.filter(function(n){return !ex.has(n);}).map(function(n){return {name:n,emoji:"🛒",section:"pantry"};})); }); }} />}
       {addingCustom && <CustomRecipeModal onSave={saveCustomRecipe} onClose={function(){setAddingCustom(false);}} />}
       {editingCustom && <CustomRecipeModal editing={editingCustom} onSave={saveCustomRecipe} onClose={function(){setEditingCustom(null);}} />}
     </div>
@@ -1694,92 +1720,90 @@ function CustomRecipeModal({ onSave, onClose, editing }) {
     return function() { document.body.style.overflow = ""; };
   }, []);
   return (
-    <Modal>
-      <div onMouseDown={function(e){if(e.target===e.currentTarget)onClose();}}
-        style={{ position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:9999,background:"#3D2B1F88",display:"flex",alignItems:"flex-end",justifyContent:"center" }}>
-        <div style={{ background:T.cream,width:"100%",maxWidth:"640px",borderRadius:"24px 24px 0 0",maxHeight:"90vh",display:"flex",flexDirection:"column",boxShadow:"0 -8px 40px #3D2B1F33" }}>
-          <div className="flex-shrink-0 px-5 pt-5 pb-3" style={{ borderBottom:"1.5px solid "+T.cream3 }}>
-            <div className="flex items-center justify-between">
-              <h3 className="font-black text-lg" style={{ color:T.text, fontFamily:"Georgia,serif" }}>
-                {editing ? "✏️ 編輯食譜" : "✨ 自訂食譜"}
-              </h3>
-              <button onClick={onClose} className="w-9 h-9 rounded-full flex items-center justify-center" style={{ background:T.cream3 }}>
-                <X size={16} style={{color:T.textMid}} />
-              </button>
-            </div>
-          </div>
-          <div className="overflow-y-auto flex-1 px-5 py-4 space-y-4">
-            <div>
-              <p className="text-xs font-black uppercase tracking-widest mb-2" style={{color:T.textSoft}}>食物圖示</p>
-              <div className="flex flex-wrap gap-2">
-                {RECIPE_EMOJIS.map(function(e) { return (
-                  <button key={e} type="button" onClick={function(){setEmoji(e);}}
-                    className="w-9 h-9 rounded-xl flex items-center justify-center text-xl"
-                    style={{ background:emoji===e?T.sage3:T.cream2, border:"2px solid "+(emoji===e?T.sage:T.cream3) }}>
-                    {e}
-                  </button>
-                ); })}
-              </div>
-            </div>
-            <div>
-              <p className="text-xs font-black uppercase tracking-widest mb-1" style={{color:T.textSoft}}>菜式名稱 *</p>
-              <input value={title} onChange={function(e){setTitle(e.target.value);}} placeholder="例如：火鍋、壽喜燒、烤雞…"
-                className="w-full px-3 py-2.5 rounded-xl border-2 text-sm outline-none"
-                style={{ background:T.cream2, borderColor:title.trim()?T.sage:T.cream3, color:T.text }} />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <p className="text-xs font-black uppercase tracking-widest mb-1" style={{color:T.textSoft}}>類型</p>
-                <select value={cuisine} onChange={function(e){setCuisine(e.target.value);}}
-                  className="w-full px-3 py-2.5 rounded-xl border-2 text-sm outline-none"
-                  style={{ background:T.cream2, borderColor:T.cream3, color:T.text }}>
-                  {CUISINE_OPTS.map(function(c){return <option key={c.id} value={c.id}>{c.emoji} {c.label}</option>;})}
-                </select>
-              </div>
-              <div>
-                <p className="text-xs font-black uppercase tracking-widest mb-1" style={{color:T.textSoft}}>時間（分鐘）</p>
-                <input type="number" min="1" max="300" value={time} onChange={function(e){setTime(e.target.value);}}
-                  className="w-full px-3 py-2.5 rounded-xl border-2 text-sm outline-none"
-                  style={{ background:T.cream2, borderColor:T.cream3, color:T.text }} />
-              </div>
-            </div>
-            <button type="button" onClick={function(){setBusy(function(b){return !b;});}}
-              className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl border-2"
-              style={{ background:busy?T.honey3:T.cream2, borderColor:busy?T.honey:T.cream3 }}>
-              <span className="text-xl">⚡</span>
-              <div className="flex-1 text-left">
-                <p className="font-black text-sm" style={{color:busy?T.terra:T.text}}>忙日快手</p>
-                <p className="text-xs" style={{color:T.textSoft}}>忙碌日優先推薦</p>
-              </div>
-              <div className="w-11 h-6 rounded-full flex items-center px-0.5" style={{ background:busy?T.honey:T.cream3 }}>
-                <div className="w-5 h-5 rounded-full bg-white shadow-sm"
-                  style={{ transform:busy?"translateX(20px)":"translateX(0)", transition:"transform 0.2s" }} />
-              </div>
-            </button>
-            <div>
-              <p className="text-xs font-black uppercase tracking-widest mb-1" style={{color:T.textSoft}}>主要食材（頓號或逗號分隔，可留空）</p>
-              <textarea value={needs} onChange={function(e){setNeeds(e.target.value);}} rows={2}
-                placeholder="例如：火鍋湯底、牛肉片、魚蛋、豆腐…"
-                className="w-full px-3 py-2.5 rounded-xl border-2 text-sm outline-none resize-none"
-                style={{ background:T.cream2, borderColor:T.cream3, color:T.text }} />
-            </div>
-            <div>
-              <p className="text-xs font-black uppercase tracking-widest mb-1" style={{color:T.textSoft}}>備注（可選）</p>
-              <input value={notes} onChange={function(e){setNotes(e.target.value);}} placeholder="例如：全家最愛、冬天必備…"
-                className="w-full px-3 py-2.5 rounded-xl border-2 text-sm outline-none"
-                style={{ background:T.cream2, borderColor:T.cream3, color:T.text }} />
-            </div>
-          </div>
-          <div className="flex-shrink-0 px-5 pb-6 pt-3" style={{ borderTop:"1.5px solid "+T.cream3 }}>
-            <button type="button" onClick={submit} disabled={!title.trim()}
-              className="w-full py-4 rounded-2xl font-black text-white flex items-center justify-center gap-2 active:scale-95 disabled:opacity-40"
-              style={{ background:"linear-gradient(135deg,"+T.sage+","+T.sage2+")" }}>
-              <Check size={17} />{editing ? "更新食譜" : "儲存食譜"}
+    <div onMouseDown={function(e){if(e.target===e.currentTarget)onClose();}}
+      style={{ position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:9999,background:"#3D2B1F88",display:"flex",alignItems:"flex-end",justifyContent:"center" }}>
+      <div style={{ background:T.cream,width:"100%",maxWidth:"640px",borderRadius:"24px 24px 0 0",maxHeight:"90vh",display:"flex",flexDirection:"column",boxShadow:"0 -8px 40px #3D2B1F33" }}>
+        <div className="flex-shrink-0 px-5 pt-5 pb-3" style={{ borderBottom:"1.5px solid "+T.cream3 }}>
+          <div className="flex items-center justify-between">
+            <h3 className="font-black text-lg" style={{ color:T.text, fontFamily:"Georgia,serif" }}>
+              {editing ? "✏️ 編輯食譜" : "✨ 自訂食譜"}
+            </h3>
+            <button onClick={onClose} className="w-9 h-9 rounded-full flex items-center justify-center" style={{ background:T.cream3 }}>
+              <X size={16} style={{color:T.textMid}} />
             </button>
           </div>
         </div>
+        <div className="overflow-y-auto flex-1 px-5 py-4 space-y-4">
+          <div>
+            <p className="text-xs font-black uppercase tracking-widest mb-2" style={{color:T.textSoft}}>食物圖示</p>
+            <div className="flex flex-wrap gap-2">
+              {RECIPE_EMOJIS.map(function(e) { return (
+                <button key={e} type="button" onClick={function(){setEmoji(e);}}
+                  className="w-9 h-9 rounded-xl flex items-center justify-center text-xl"
+                  style={{ background:emoji===e?T.sage3:T.cream2, border:"2px solid "+(emoji===e?T.sage:T.cream3) }}>
+                  {e}
+                </button>
+              ); })}
+            </div>
+          </div>
+          <div>
+            <p className="text-xs font-black uppercase tracking-widest mb-1" style={{color:T.textSoft}}>菜式名稱 *</p>
+            <input value={title} onChange={function(e){setTitle(e.target.value);}} placeholder="例如：火鍋、壽喜燒、烤雞…"
+              className="w-full px-3 py-2.5 rounded-xl border-2 text-sm outline-none"
+              style={{ background:T.cream2, borderColor:title.trim()?T.sage:T.cream3, color:T.text }} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <p className="text-xs font-black uppercase tracking-widest mb-1" style={{color:T.textSoft}}>類型</p>
+              <select value={cuisine} onChange={function(e){setCuisine(e.target.value);}}
+                className="w-full px-3 py-2.5 rounded-xl border-2 text-sm outline-none"
+                style={{ background:T.cream2, borderColor:T.cream3, color:T.text }}>
+                {CUISINE_OPTS.map(function(c){return <option key={c.id} value={c.id}>{c.emoji} {c.label}</option>;})}
+              </select>
+            </div>
+            <div>
+              <p className="text-xs font-black uppercase tracking-widest mb-1" style={{color:T.textSoft}}>時間（分鐘）</p>
+              <input type="number" min="1" max="300" value={time} onChange={function(e){setTime(e.target.value);}}
+                className="w-full px-3 py-2.5 rounded-xl border-2 text-sm outline-none"
+                style={{ background:T.cream2, borderColor:T.cream3, color:T.text }} />
+            </div>
+          </div>
+          <button type="button" onClick={function(){setBusy(function(b){return !b;});}}
+            className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl border-2"
+            style={{ background:busy?T.honey3:T.cream2, borderColor:busy?T.honey:T.cream3 }}>
+            <span className="text-xl">⚡</span>
+            <div className="flex-1 text-left">
+              <p className="font-black text-sm" style={{color:busy?T.terra:T.text}}>忙日快手</p>
+              <p className="text-xs" style={{color:T.textSoft}}>忙碌日優先推薦</p>
+            </div>
+            <div className="w-11 h-6 rounded-full flex items-center px-0.5" style={{ background:busy?T.honey:T.cream3 }}>
+              <div className="w-5 h-5 rounded-full bg-white shadow-sm"
+                style={{ transform:busy?"translateX(20px)":"translateX(0)", transition:"transform 0.2s" }} />
+            </div>
+          </button>
+          <div>
+            <p className="text-xs font-black uppercase tracking-widest mb-1" style={{color:T.textSoft}}>主要食材（頓號或逗號分隔，可留空）</p>
+            <textarea value={needs} onChange={function(e){setNeeds(e.target.value);}} rows={2}
+              placeholder="例如：火鍋湯底、牛肉片、魚蛋、豆腐…"
+              className="w-full px-3 py-2.5 rounded-xl border-2 text-sm outline-none resize-none"
+              style={{ background:T.cream2, borderColor:T.cream3, color:T.text }} />
+          </div>
+          <div>
+            <p className="text-xs font-black uppercase tracking-widest mb-1" style={{color:T.textSoft}}>備注（可選）</p>
+            <input value={notes} onChange={function(e){setNotes(e.target.value);}} placeholder="例如：全家最愛、冬天必備…"
+              className="w-full px-3 py-2.5 rounded-xl border-2 text-sm outline-none"
+              style={{ background:T.cream2, borderColor:T.cream3, color:T.text }} />
+          </div>
+        </div>
+        <div className="flex-shrink-0 px-5 pb-6 pt-3" style={{ borderTop:"1.5px solid "+T.cream3 }}>
+          <button type="button" onClick={submit} disabled={!title.trim()}
+            className="w-full py-4 rounded-2xl font-black text-white flex items-center justify-center gap-2 active:scale-95 disabled:opacity-40"
+            style={{ background:"linear-gradient(135deg,"+T.sage+","+T.sage2+")" }}>
+            <Check size={17} />{editing ? "更新食譜" : "儲存食譜"}
+          </button>
+        </div>
       </div>
-    </Modal>
+    </div>
   );
 }
 
@@ -1862,7 +1886,7 @@ function App() {
         <main className="px-4 pt-4 pb-28 safe-bottom">
           <div className="fade-up" key={tab}>
             {tab==="storage" && <StorageTab items={items} setItems={setItems} customRecipes={customRecipes} setCustomRecipes={setCustomRecipes} />}
-            {tab==="recipes" && <RecipesTab recipes={allRecipes} items={items} busyToday={busyToday} syncStatus={syncStatus} lastSync={lastSync} syncError={syncError} onRefresh={refresh} customRecipes={customRecipes} setCustomRecipes={setCustomRecipes} />}
+            {tab==="recipes" && <RecipesTab recipes={allRecipes} items={items} busyToday={busyToday} syncStatus={syncStatus} lastSync={lastSync} syncError={syncError} onRefresh={refresh} customRecipes={customRecipes} setCustomRecipes={setCustomRecipes} setRestockList={setRestockList} />}
             {tab==="plan"    && <PlanTab recipes={allRecipes} items={items} customRecipes={customRecipes} setCustomRecipes={setCustomRecipes} />}
             {tab==="ai"      && <AIVisionTab items={items} setItems={setItems} essentials={essentials} setEssentials={setEssentials} restockList={restockList} setRestockList={setRestockList} />}
           </div>
