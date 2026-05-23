@@ -880,12 +880,77 @@ function StorageTab({ items, setItems, customRecipes, setCustomRecipes }) {
   );
 }
 
-// Fuzzy pantry match — true if ingredient name and pantry item overlap
+// ── INGREDIENT ALIAS DATABASE ─────────────────────────────────────────────────
+// Groups of names that refer to the SAME ingredient
+// Rule: items in the SAME group match each other
+// Items NOT in the same group do NOT match (e.g. 豬肉 ≠ 碎豬肉)
+const INGREDIENT_ALIASES = [
+  ["雞蛋","蛋","egg","eggs","鷄蛋"],
+  ["牛奶","milk","全脂牛奶","低脂牛奶","鮮奶"],
+  ["芝士","cheese","起司","奶酪","忌廉芝士","cream cheese"],
+  ["豬肉","pork","豬"],
+  ["碎豬肉","豬肉碎","minced pork","豬絞肉","豬免治"],
+  ["雞肉","chicken","雞"],
+  ["雞腿","雞腿肉","去骨雞腿","chicken thigh"],
+  ["雞胸","雞胸肉","chicken breast"],
+  ["碎牛肉","牛肉碎","minced beef","牛免治","牛絞肉"],
+  ["牛肉","beef","牛"],
+  ["蝦","蝦仁","prawns","shrimp"],
+  ["三文魚","salmon","煙三文魚","smoked salmon"],
+  ["麵粉","flour","plain flour","自發粉"],
+  ["糖","白糖","砂糖","sugar","granulated sugar"],
+  ["鹽","salt","海鹽"],
+  ["油","食油","粟米油","vegetable oil","cooking oil"],
+  ["蒜","蒜頭","garlic","蒜粒","蒜瓣"],
+  ["薑","薑片","ginger"],
+  ["洋蔥","onion","洋葱"],
+  ["蔥","青蔥","spring onion","蔥段","蔥花"],
+  ["生抽","醬油","soy sauce","soya sauce"],
+  ["老抽","dark soy sauce"],
+  ["蠔油","oyster sauce"],
+  ["香腸","sausage","腸"],
+  ["火腿","ham"],
+  ["番茄","tomato","西紅柿"],
+  ["薯仔","potato","馬鈴薯","薯"],
+  ["紅蘿蔔","carrot","甘筍"],
+  ["菠菜","spinach"],
+  ["豆腐","tofu"],
+  ["米","白米","rice","絲苗米"],
+  ["麵","麵條","noodles","pasta"],
+  ["麵包","bread","吐司","土司"],
+  ["牛油","butter","忌廉"],
+];
+
+// Build lookup: name → canonical group index
+const _aliasMap = new Map();
+INGREDIENT_ALIASES.forEach(function(group, i) {
+  group.forEach(function(name) {
+    _aliasMap.set(name.toLowerCase().trim(), i);
+  });
+});
+
 function fuzzyMatch(need, pantryNames) {
   const n = need.toLowerCase().trim();
+  const needGroup = _aliasMap.get(n);
   return pantryNames.some(function(p) {
     const pn = p.toLowerCase().trim();
-    return pn === n || pn.includes(n) || n.includes(pn);
+    // 1. Exact match
+    if (pn === n) return true;
+    // 2. Alias group match (e.g. egg = 雞蛋)
+    const pantryGroup = _aliasMap.get(pn);
+    if (needGroup !== undefined && pantryGroup !== undefined && needGroup === pantryGroup) return true;
+    // 3. Strict containment — only match if shorter word is a complete word boundary
+    //    e.g. "豬肉" should NOT match "碎豬肉" but "雞腿肉" SHOULD match "去骨雞腿肉"
+    //    Rule: skip if either contains the other AND they differ by a modifier prefix
+    const MODIFIERS = ["碎","免治","絞","煙","燻","烤","炸","冷凍","急凍","熟","生","乾","罐頭"];
+    const hasModifier = MODIFIERS.some(function(m) {
+      return (pn.includes(m) || n.includes(m)) && (pn.replace(m,"") === n || n.replace(m,"") === pn);
+    });
+    if (hasModifier) return false;
+    // Safe partial: only if one fully contains the other and length diff is small
+    if (pn.includes(n) && n.length >= 2 && pn.length - n.length <= 2) return true;
+    if (n.includes(pn) && pn.length >= 2 && n.length - pn.length <= 2) return true;
+    return false;
   });
 }
 
