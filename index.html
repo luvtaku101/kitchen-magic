@@ -644,19 +644,25 @@ function AddItemModal({ defaultSection, onAdd, onClose }) {
 }
 
 // ── FOOD ITEM ROW ──────────────────────────────────────────────────────────────
-function FoodItemRow({ item, onDelete, onMove }) {
+function FoodItemRow({ item, onDelete, onMove, onUpdateQty }) {
   var sec = SECTIONS.find(function(s) { return s.id === item.section; }) || SECTIONS[0];
   var days = daysDiff(item.dateAdded);
   var badge = freshBadge(days, sec.alertDays);
   var isAlert = days >= sec.alertDays;
   var isWarn  = !isAlert && days >= Math.floor(sec.alertDays * 0.7);
   var [mode, setMode] = useState("idle");
+  var [editQty, setEditQty] = useState(String(item.qty));
   var moveTargets = SECTIONS.filter(function(s) { return s.id !== item.section; });
   var handleMove = function(targetId) {
     var isDefrost = item.section === "frozen" && targetId === "fridge";
     var newDate  = isDefrost ? todayStr() : item.dateAdded;
     var newNotes = isDefrost ? (item.notes ? item.notes + " · 已解凍" : "已解凍") : item.notes;
     onMove(item.id, targetId, newDate, newNotes);
+    setMode("idle");
+  };
+  var commitQty = function(val) {
+    var n = parseFloat(val);
+    if (!isNaN(n) && n >= 0) onUpdateQty(item.id, n);
     setMode("idle");
   };
   return (
@@ -669,7 +675,13 @@ function FoodItemRow({ item, onDelete, onMove }) {
             {isAlert && <span>{item.emoji} </span>}{item.name}
           </p>
           <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-            <span className="text-xs" style={{ color:T.textFaint }}>{item.qty}{item.unit}</span>
+            {/* Tappable qty badge */}
+            <button type="button" onClick={function(){ setEditQty(String(item.qty)); setMode(mode==="qty"?"idle":"qty"); }}
+              className="flex items-center gap-1 px-2 py-0.5 rounded-full border font-bold text-xs active:scale-95"
+              style={{ background:mode==="qty"?sec.bg:T.cream3, borderColor:mode==="qty"?sec.color:T.cream3, color:mode==="qty"?sec.color:T.textMid }}>
+              <Icon name="package" size={9} style={{color:mode==="qty"?sec.color:T.textFaint}} />
+              {item.qty}{item.unit}
+            </button>
             <span className="text-xs px-2 py-0.5 rounded-full font-bold" style={{ background:badge.bg, color:badge.color }}>{badge.text}</span>
             {item.notes && <span className="text-xs italic truncate" style={{ color:T.textSoft, maxWidth:100 }}>{item.notes}</span>}
           </div>
@@ -686,6 +698,12 @@ function FoodItemRow({ item, onDelete, onMove }) {
             </button>
           </div>
         )}
+        {mode === "qty" && (
+          <button type="button" onClick={function(){setMode("idle");}}
+            className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0" style={{ background:T.cream3 }}>
+            <X size={12} style={{color:T.textMid}} />
+          </button>
+        )}
         {mode === "delete" && (
           <div className="flex items-center gap-1 flex-shrink-0">
             <button type="button" onClick={function(){onDelete(item.id);}}
@@ -701,6 +719,30 @@ function FoodItemRow({ item, onDelete, onMove }) {
           </button>
         )}
       </div>
+      {/* QTY EDITOR */}
+      {mode === "qty" && (
+        <div className="px-3.5 pb-3 space-y-2">
+          <p className="text-xs font-black" style={{color:T.textSoft}}>更改數量：</p>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={function(){ var n=parseFloat(editQty)||0; setEditQty(String(Math.max(0,parseFloat((n-1).toFixed(1))))); }}
+              className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 font-black text-lg" style={{ background:T.cream3, color:T.textMid }}>−</button>
+            <input type="number" min="0" step="0.5" value={editQty}
+              onChange={function(e){ setEditQty(e.target.value); }}
+              className="flex-1 text-center py-2 rounded-xl border-2 font-black text-base outline-none"
+              style={{ background:T.cream, borderColor:sec.color, color:T.text }} />
+            <span className="text-sm font-bold flex-shrink-0" style={{color:T.textSoft}}>{item.unit}</span>
+            <button type="button" onClick={function(){ var n=parseFloat(editQty)||0; setEditQty(String(parseFloat((n+1).toFixed(1)))); }}
+              className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 font-black text-lg" style={{ background:sec.bg, color:sec.color }}>+</button>
+          </div>
+          <div className="flex gap-2">
+            <button type="button" onClick={function(){ commitQty(editQty); }}
+              className="flex-1 py-2 rounded-xl font-black text-white text-sm active:scale-95"
+              style={{ background:sec.color }}>確認更新</button>
+            <button type="button" onClick={function(){setMode("idle");}}
+              className="px-4 py-2 rounded-xl font-bold text-sm" style={{ background:T.cream3, color:T.textMid }}>取消</button>
+          </div>
+        </div>
+      )}
       {mode === "move" && (
         <div className="px-3.5 pb-3 flex flex-wrap gap-2">
           <p className="w-full text-xs font-black mb-1" style={{color:T.textSoft}}>移動至：</p>
@@ -729,10 +771,13 @@ function StorageTab({ items, setItems, customRecipes, setCustomRecipes }) {
   const [importMsg, setImportMsg]       = useState("");
   const importRef = useRef(null);
   const openModal = (section="fridge") => { setModalSection(section); setModalOpen(true); };
-  const deleteItem = useCallback(id => setItems(p => p.filter(i => i.id !== id)), [setItems]);
-  const addItem    = useCallback(item => setItems(p => [item,...p]), [setItems]);
-  const moveItem   = useCallback(function(id, newSection, newDate, newNotes) {
+  const deleteItem    = useCallback(id => setItems(p => p.filter(i => i.id !== id)), [setItems]);
+  const addItem       = useCallback(item => setItems(p => [item,...p]), [setItems]);
+  const moveItem      = useCallback(function(id, newSection, newDate, newNotes) {
     setItems(function(p) { return p.map(function(i) { return i.id === id ? Object.assign({}, i, {section:newSection, dateAdded:newDate, notes:newNotes}) : i; }); });
+  }, [setItems]);
+  const updateQty     = useCallback(function(id, newQty) {
+    setItems(function(p) { return p.map(function(i) { return i.id === id ? Object.assign({}, i, {qty:newQty}) : i; }); });
   }, [setItems]);
 
   const exportData = useCallback(function() {
@@ -870,7 +915,7 @@ function StorageTab({ items, setItems, customRecipes, setCustomRecipes }) {
                 <h3 className="font-black" style={{ color:sec.color, fontFamily:"Georgia,serif" }}>{sec.label}</h3>
                 <span className="text-xs px-2 py-0.5 rounded-full font-bold" style={{ background:sec.bg, color:sec.color }}>{list.length}</span>
               </div>
-              <div className="space-y-2">{list.map(item => <FoodItemRow key={item.id} item={item} onDelete={deleteItem} onMove={moveItem} />)}</div>
+              <div className="space-y-2">{list.map(item => <FoodItemRow key={item.id} item={item} onDelete={deleteItem} onMove={moveItem} onUpdateQty={updateQty} />)}</div>
             </div>
           ))}
         </div>
@@ -1512,6 +1557,205 @@ function PlanTab({ recipes, items, customRecipes, setCustomRecipes }) {
 }
 
 // ── AI VISION TAB ─────────────────────────────────────────────────────────────
+// ── RESTOCK PANEL ─────────────────────────────────────────────────────────────
+const STORES = ["Costco","ASDA","Tesco","M&S","Waitrose","Amazon","其他"];
+const STORE_COLORS = {
+  "Costco":"#C4242A","ASDA":"#1E6E30","Tesco":"#00539F","M&S":"#1A1A1A",
+  "Waitrose":"#007A33","Amazon":"#FF9900","其他":T.textMid
+};
+const STORE_BGS = {
+  "Costco":"#FDE8E8","ASDA":"#E4F5EB","Tesco":"#E4EEF8","M&S":"#E8E8E8",
+  "Waitrose":"#E4F0EA","Amazon":"#FEF3DC","其他":T.cream3
+};
+
+function RestockPanel({ restockList, setRestockList, onRestockItem }) {
+  const [storeFilter, setStoreFilter] = useState(null);
+  const [manualName,  setManualName]  = useState("");
+  const [manualEmoji, setManualEmoji] = useState("🛒");
+  const [manualSec,   setManualSec]   = useState("pantry");
+  const [manualStore, setManualStore] = useState("");
+  const [showAdd, setShowAdd]         = useState(false);
+
+  const removeRestock = function(name) { setRestockList(function(p){ return p.filter(function(r){ return r.name!==name; }); }); };
+
+  const addManual = function() {
+    if (!manualName.trim()) return;
+    setRestockList(function(prev) {
+      var ex = new Set(prev.map(function(r){ return r.name; }));
+      if (ex.has(manualName.trim())) return prev;
+      return prev.concat([{ name:manualName.trim(), emoji:manualEmoji, section:manualSec, store:manualStore||"" }]);
+    });
+    setManualName(""); setManualEmoji("🛒"); setManualSec("pantry"); setManualStore(""); setShowAdd(false);
+  };
+
+  const setStore = function(name, store) {
+    setRestockList(function(p){ return p.map(function(r){ return r.name===name ? Object.assign({},r,{store:store}) : r; }); });
+  };
+
+  const sectionEmojis = { fridge:"🧊", frozen:"❄️", pantry:"🪴", leftover:"🍱" };
+
+  const storesPresent = useMemo(function() {
+    var s = new Set(restockList.map(function(r){ return r.store||""; }).filter(Boolean));
+    return STORES.filter(function(st){ return s.has(st); });
+  }, [restockList]);
+
+  const displayed = useMemo(function() {
+    if (!storeFilter) return restockList;
+    return restockList.filter(function(r){ return (r.store||"") === storeFilter; });
+  }, [restockList, storeFilter]);
+
+  // Group by store for sorted display
+  const grouped = useMemo(function() {
+    if (storeFilter) return [{store: storeFilter, items: displayed}];
+    var groups = {};
+    displayed.forEach(function(r) {
+      var k = r.store || "未分類";
+      if (!groups[k]) groups[k] = [];
+      groups[k].push(r);
+    });
+    // Sort: stores with assignments first, then 未分類
+    var order = STORES.filter(function(s){ return groups[s]; }).concat(groups["未分類"] ? ["未分類"] : []);
+    return order.map(function(k){ return { store:k, items:groups[k] }; });
+  }, [displayed, storeFilter]);
+
+  if (restockList.length === 0 && !showAdd) return (
+    <div className="rounded-2xl overflow-hidden" style={{ border:`1.5px solid ${T.honey2}` }}>
+      <div className="px-4 py-2.5 flex items-center gap-2" style={{ background:T.honey3 }}>
+        <ShoppingCart size={14} style={{color:T.terra}}/>
+        <p className="font-black text-sm" style={{color:T.terra}}>待買清單</p>
+        <button onClick={function(){setShowAdd(true);}} className="ml-auto flex items-center gap-1 text-xs px-2.5 py-1 rounded-full font-black active:scale-95" style={{ background:T.honey, color:"#fff" }}>
+          <Plus size={11}/>手動加入
+        </button>
+      </div>
+      <div className="px-4 py-4 text-center" style={{ background:T.cream }}>
+        <p className="text-sm" style={{color:T.textFaint}}>清單係空嘅，加入物品先！</p>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="rounded-2xl overflow-hidden" style={{ border:`2px solid ${T.honey2}` }}>
+      {/* Header */}
+      <div className="px-4 py-2.5 flex items-center gap-2" style={{ background:T.honey3 }}>
+        <ShoppingCart size={14} style={{color:T.terra}}/>
+        <p className="font-black text-sm" style={{color:T.terra}}>待買清單</p>
+        <span className="text-xs px-2 py-0.5 rounded-full font-black text-white" style={{background:T.honey}}>{restockList.length}</span>
+        <button onClick={function(){setShowAdd(v=>!v); setManualName("");}}
+          className="ml-auto flex items-center gap-1 text-xs px-2.5 py-1 rounded-full font-black active:scale-95"
+          style={{ background:showAdd?T.cream3:T.honey, color:showAdd?T.textMid:"#fff" }}>
+          {showAdd ? <><X size={10}/>取消</> : <><Plus size={11}/>手動加入</>}
+        </button>
+      </div>
+
+      {/* Manual add form */}
+      {showAdd && (
+        <div className="px-4 py-3 space-y-3" style={{ background:T.cream2, borderBottom:`1.5px solid ${T.honey2}` }}>
+          <p className="text-xs font-black uppercase tracking-widest" style={{color:T.textSoft}}>手動加入物品</p>
+          <div className="flex gap-2">
+            <input value={manualEmoji} onChange={function(e){setManualEmoji(e.target.value);}} maxLength={2}
+              className="w-12 text-center text-xl rounded-xl border-2 outline-none py-2"
+              style={{ background:T.cream, borderColor:T.cream3 }} />
+            <input value={manualName} onChange={function(e){setManualName(e.target.value);}}
+              placeholder="物品名稱…"
+              className="flex-1 px-3 py-2 rounded-xl border-2 text-sm outline-none"
+              style={{ background:T.cream, borderColor:manualName.trim()?T.honey:T.cream3, color:T.text }} />
+          </div>
+          <div className="flex gap-2">
+            <select value={manualSec} onChange={function(e){setManualSec(e.target.value);}}
+              className="flex-1 px-3 py-2 rounded-xl border-2 text-xs outline-none"
+              style={{ background:T.cream, borderColor:T.cream3, color:T.text }}>
+              <option value="fridge">🧊 雪櫃</option>
+              <option value="frozen">❄️ 冷凍</option>
+              <option value="pantry">🪴 食品櫃</option>
+            </select>
+            <select value={manualStore} onChange={function(e){setManualStore(e.target.value);}}
+              className="flex-1 px-3 py-2 rounded-xl border-2 text-xs outline-none"
+              style={{ background:T.cream, borderColor:T.cream3, color:T.text }}>
+              <option value="">🏪 邊度買？（可選）</option>
+              {STORES.map(function(s){ return <option key={s} value={s}>{s}</option>; })}
+            </select>
+          </div>
+          <button type="button" onClick={addManual} disabled={!manualName.trim()}
+            className="w-full py-2.5 rounded-xl font-black text-white text-sm flex items-center justify-center gap-2 active:scale-95 disabled:opacity-40"
+            style={{ background:`linear-gradient(135deg,${T.honey},${T.honey2})` }}>
+            <Plus size={14}/>加入待買清單
+          </button>
+        </div>
+      )}
+
+      {/* Store filter pills */}
+      {storesPresent.length > 0 && (
+        <div className="px-4 pt-2.5 pb-1 flex gap-1.5 overflow-x-auto scrollbar-hide" style={{ background:T.cream }}>
+          <button onClick={function(){setStoreFilter(null);}}
+            className="flex-shrink-0 text-xs px-3 py-1 rounded-full font-black border-2 active:scale-95"
+            style={!storeFilter ? {background:T.honey,color:"#fff",borderColor:T.honey} : {background:T.cream2,color:T.textMid,borderColor:T.cream3}}>
+            全部
+          </button>
+          {storesPresent.map(function(s) {
+            var on = storeFilter===s;
+            return (
+              <button key={s} onClick={function(){setStoreFilter(on?null:s);}}
+                className="flex-shrink-0 text-xs px-3 py-1 rounded-full font-black border-2 active:scale-95"
+                style={on ? {background:STORE_COLORS[s]||T.textMid,color:"#fff",borderColor:STORE_COLORS[s]||T.textMid}
+                           : {background:STORE_BGS[s]||T.cream3,color:STORE_COLORS[s]||T.textMid,borderColor:(STORE_COLORS[s]||T.textMid)+"55"}}>
+                {s}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* List grouped by store */}
+      <div style={{ background:T.cream }}>
+        {grouped.map(function(group) {
+          var isUncat = group.store==="未分類";
+          return (
+            <div key={group.store}>
+              {(!storeFilter && grouped.length > 1) && (
+                <div className="px-4 pt-3 pb-1 flex items-center gap-2">
+                  {!isUncat && (
+                    <span className="text-xs font-black px-2.5 py-0.5 rounded-full"
+                      style={{ background:STORE_BGS[group.store]||T.cream3, color:STORE_COLORS[group.store]||T.textMid }}>
+                      🏪 {group.store}
+                    </span>
+                  )}
+                  {isUncat && <span className="text-xs font-bold" style={{color:T.textFaint}}>📌 未指定商店</span>}
+                </div>
+              )}
+              {group.items.map(function(item) {
+                return (
+                  <div key={item.name} className="flex items-center gap-3 px-4 py-3 border-b last:border-0" style={{ borderColor:T.cream3 }}>
+                    <span className="text-xl flex-shrink-0">{item.emoji}</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-bold truncate" style={{color:T.text}}>{item.name}</p>
+                      <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                        <span className="text-xs" style={{color:T.textFaint}}>{sectionEmojis[item.section]||""} {item.section}</span>
+                        {/* Inline store picker */}
+                        <select value={item.store||""} onChange={function(e){ setStore(item.name, e.target.value); }}
+                          className="text-xs rounded-lg border outline-none px-1.5 py-0.5 max-w-[100px]"
+                          style={{ background:item.store?STORE_BGS[item.store]||T.cream3:T.cream2,
+                                   color:item.store?STORE_COLORS[item.store]||T.textMid:T.textFaint,
+                                   borderColor:item.store?(STORE_COLORS[item.store]||T.cream3)+"66":T.cream3 }}>
+                          <option value="">🏪 商店</option>
+                          {STORES.map(function(s){ return <option key={s} value={s}>{s}</option>; })}
+                        </select>
+                      </div>
+                    </div>
+                    <button onClick={function(){onRestockItem(item);}} className="text-xs px-2.5 py-1.5 rounded-xl font-black text-white flex-shrink-0" style={{background:T.sage}}>已買</button>
+                    <button onClick={function(){removeRestock(item.name);}} className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0" style={{background:T.cream3}}>
+                      <X size={11} style={{color:T.textSoft}}/>
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function AIVisionTab({ items, setItems, essentials, setEssentials, restockList, setRestockList }) {
   const [mode, setMode]           = useState("restock");
   const [imgSrc, setImgSrc]       = useState(null);
@@ -1767,29 +2011,7 @@ function AIVisionTab({ items, setItems, essentials, setEssentials, restockList, 
           )}
         </div>
       )}
-      {restockList.length>0 && (
-        <div className="rounded-2xl overflow-hidden" style={{ border:`2px solid ${T.honey2}` }}>
-          <div className="px-4 py-2.5 flex items-center gap-2" style={{ background:T.honey3 }}>
-            <ShoppingCart size={14} style={{color:T.terra}}/><p className="font-black text-sm" style={{color:T.terra}}>待買清單</p>
-            <span className="ml-auto text-xs px-2 py-0.5 rounded-full font-black text-white" style={{background:T.honey}}>{restockList.length}</span>
-          </div>
-          <div className="divide-y" style={{ background:T.cream }}>
-            {restockList.map(item => (
-              <div key={item.name} className="flex items-center gap-3 px-4 py-3">
-                <span className="text-xl">{item.emoji}</span>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-bold" style={{color:T.text}}>{item.name}</p>
-                  <p className="text-xs" style={{color:T.textFaint}}>{sectionEmojis[item.section]} {item.section}</p>
-                </div>
-                <button onClick={()=>restockItem(item)} className="text-xs px-2.5 py-1.5 rounded-xl font-black text-white" style={{background:T.sage}}>已買</button>
-                <button onClick={()=>removeRestock(item.name)} className="w-7 h-7 rounded-full flex items-center justify-center" style={{background:T.cream3}}>
-                  <X size={11} style={{color:T.textSoft}}/>
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      <RestockPanel restockList={restockList} setRestockList={setRestockList} onRestockItem={restockItem} />
     </div>
   );
 }
