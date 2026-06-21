@@ -277,6 +277,7 @@ function parseCSVtoRecipes(text) {
     steps:       colIdx(["cookingsteps","步驟","做法","steps","instructions"]),
     cuisine:     colIdx(["whatk","菜系","cuisine","style"]),
     favourites:  colIdx(["whosfavourite","whofavourite","喜歡","最愛","favourite","favorites","family"]),
+    video:       colIdx(["videourl","video","影片","videolink","youtubeurl","youtube","url","連結"]),
   };
   const getCol = (cols, idx) => idx !== -1 ? (cols[idx] || "").replace(/^"|"$/g,"").trim() : "";
   const tagToCuisine = (rawTags, rawCuisine) => {
@@ -316,10 +317,11 @@ function parseCSVtoRecipes(text) {
     const steps = rawSteps ? splitField(rawSteps) : [];
     const rawFav = getCol(cols, COL.favourites).toLowerCase();
     const favourites = FAMILY.filter(f => rawFav.includes(f.label.toLowerCase()) || rawFav.includes(f.id)).map(f => f.id);
+    const videoUrl = getCol(cols, COL.video);
     const cuisine = tagToCuisine(rawTags, rawCuisine);
     const palette = [T.honey, T.peach, T.sage, T.terra2, T.sky, T.rose, T.sage2, T.honey2];
     const color = palette[idx % palette.length];
-    recipes.push({ id:`sheet_${idx+1}`, title:name, emoji, cuisine, time, color, tags, needs:mainIngredients, ingredients, optional:[], steps, notes, favourites, fasterMethod:null, fromSheet:true });
+    recipes.push({ id:`sheet_${idx+1}`, title:name, emoji, cuisine, time, color, tags, needs:mainIngredients, ingredients, optional:[], steps, notes, favourites, fasterMethod:null, fromSheet:true, videoUrl });
   });
   return recipes;
 }
@@ -1146,6 +1148,18 @@ function RecipeViewModal({ recipe, pantryNames, onClose, onAddToRestock }) {
             <div className="mb-4 px-3 py-2.5 rounded-2xl text-sm" style={{ background:T.honey3, border:`1.5px solid ${T.honey2}` }}>
               💡 <span style={{ color:T.textMid }}>{recipe.notes}</span>
             </div>
+          )}
+          {recipe.videoUrl && (
+            <a href={recipe.videoUrl} target="_blank" rel="noopener noreferrer"
+              className="flex items-center gap-2.5 px-4 py-3 rounded-2xl mb-4 active:scale-[0.98]"
+              style={{ background:"#FF000015", border:"1.5px solid #FF000040", textDecoration:"none", display:"flex" }}>
+              <span style={{ fontSize:"18px" }}>▶️</span>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-black" style={{ color:"#CC0000" }}>觀看教學影片</p>
+                <p className="text-xs truncate" style={{ color:T.textSoft }}>{recipe.videoUrl.replace(/^https?:\/\/(www\.)?/,"").slice(0,45)}</p>
+              </div>
+              <Icon name="external-link" size={13} style={{color:"#CC0000",flexShrink:0}} />
+            </a>
           )}
           <div className="flex gap-2 mb-4 p-1 rounded-2xl" style={{ background:T.cream3 }}>
             {[["ingredients","食材"],["steps","步驟"]].map(([id,label]) => (
